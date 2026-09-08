@@ -16,13 +16,15 @@ const showTextFormat = computed(() => {
   if (!canvas.selectedBlockId) return false
   const block = canvas.selectedBlock
   if (!block || block.type !== 'text') return false
-  return hasTextSelection.value
+  return true
 })
 
 const showBlockProps = computed(() => {
   if (!canvas.selectedBlockId) return false
-  // Hide block props while editing text or when text is selected
-  if (canvas.editingBlockId || hasTextSelection.value) return false
+  const block = canvas.selectedBlock
+  if (!block) return false
+  // In editing mode, only show text format bar (hide block props)
+  if (canvas.editingBlockId && block.type === 'text') return false
   return true
 })
 
@@ -149,7 +151,7 @@ function updateTextSelection() {
 }
 
 // Re-position when selection changes or content mode switches
-watch([() => canvas.selectedBlockId, showTextFormat, showBlockProps], () => {
+watch([() => canvas.selectedBlockId, () => canvas.selectedBlockIds.length, showTextFormat, showBlockProps, showAlignToolbar], () => {
   updateTextSelection()
   nextTick(() => {
     requestAnimationFrame(updatePosition)
@@ -182,10 +184,9 @@ onUnmounted(() => {
 })
 
 function onPanelMouseDown(e: MouseEvent) {
-  const target = e.target as HTMLElement
-  const tag = target.tagName.toLowerCase()
-  if (tag === 'select' || tag === 'input' || tag === 'option') return
-  e.preventDefault()
+  // Stop propagation to prevent canvas mousedown handler from firing
+  // but do NOT preventDefault so buttons and inputs work normally
+  e.stopPropagation()
 }
 </script>
 

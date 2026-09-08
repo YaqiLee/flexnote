@@ -75,37 +75,7 @@ export function createDefaultData(): AppData {
   }
   return {
     version: DATA_VERSION,
-    groups: [
-      {
-        id: 'g1',
-        name: '01 基础知识',
-        collapsed: false,
-        items: [
-          { id: 'n1', title: '01-01 电的基本概念', starred: true },
-          { id: 'n2', title: '01-02 导体与绝缘体', starred: false },
-          { id: 'n3', title: '01-03 电流、电压、电阻', starred: false },
-        ],
-      },
-      {
-        id: 'g2',
-        name: '02 电路基础',
-        collapsed: false,
-        items: [
-          { id: 'n4', title: '02-01 串联与并联电路', starred: false },
-          { id: 'n5', title: '02-02 基尔霍夫定律', starred: true },
-          { id: 'n6', title: '02-03 欧姆定律与安全电压', starred: true },
-        ],
-      },
-      {
-        id: 'g3',
-        name: '03 电气安全',
-        collapsed: false,
-        items: [
-          { id: 'n7', title: '03-01 触电急救措施', starred: false },
-          { id: 'n8', title: '03-02 接地与接零保护', starred: false },
-        ],
-      },
-    ],
+    groups: [],
     notes,
     activeNoteId: 'n6',
   }

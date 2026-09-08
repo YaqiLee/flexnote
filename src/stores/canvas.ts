@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, toRaw } from 'vue'
 import { saveAppData, loadAppData, createDefaultData } from '../services/storage'
 import { useNavStore } from './nav'
 
@@ -18,6 +18,11 @@ export interface BlockData {
   borderRadius?: number
   fontSize?: number
   fontColor?: string
+  fontFamily?: string
+  lineHeight?: number
+  fontWeight?: string
+  fontStyle?: string
+  textDecoration?: string
   zIndex: number
 }
 
@@ -29,9 +34,91 @@ export const useCanvasStore = defineStore('canvas', () => {
   const currentTool = ref<'text' | 'image' | 'label' | 'formula' | null>(null)
   const pendingImageData = ref<string | null>(null)
   const isLoaded = ref(false)
-  let zIndexCounter = 10
+  let zIndexCounter = 0
   let saveTimer: ReturnType<typeof setTimeout> | null = null
   let suppressSave = false
+
+  // Undo/Redo history
+  const MAX_HISTORY = 50
+  const undoStack: BlockData[][] = []
+  const redoStack: BlockData[][] = []
+  let isUndoRedoInProgress = false
+
+  function cloneBlocks(): BlockData[] {
+    return JSON.parse(JSON.stringify(toRaw(blocks.value)))
+  }
+
+  function pushSnapshot() {
+    if (isUndoRedoInProgress) return
+    undoStack.push(cloneBlocks())
+    if (undoStack.length > MAX_HISTORY) undoStack.shift()
+    redoStack.length = 0
+  }
+
+  function undo() {
+    if (undoStack.length === 0) return
+    isUndoRedoInProgress = true
+    redoStack.push(cloneBlocks())
+    blocks.value = undoStack.pop()!
+    selectedBlockId.value = null
+    selectedBlockIds.value = []
+    editingBlockId.value = null
+    normalizeZIndices()
+    isUndoRedoInProgress = false
+    scheduleSave()
+  }
+
+  function redo() {
+    if (redoStack.length === 0) return
+    isUndoRedoInProgress = true
+    undoStack.push(cloneBlocks())
+    blocks.value = redoStack.pop()!
+    selectedBlockId.value = null
+    selectedBlockIds.value = []
+    editingBlockId.value = null
+    normalizeZIndices()
+    isUndoRedoInProgress = false
+    scheduleSave()
+  }
+
+  function normalizeZIndices() {
+    const sorted = [...blocks.value].sort((a, b) => (a.zIndex || 0) - (b.zIndex || 0))
+    sorted.forEach((b, i) => { b.zIndex = i + 1 })
+    zIndexCounter = sorted.length
+  }
+
+  function validateAndFixBlock(raw: any): BlockData | null {
+    if (!raw || typeof raw !== 'object') return null
+    const validTypes = ['text', 'image', 'label', 'formula'] as const
+    const type = validTypes.includes(raw.type) ? raw.type : 'text'
+    const x = Number.isFinite(raw.x) ? raw.x : 0
+    const y = Number.isFinite(raw.y) ? raw.y : 0
+    const width = Number.isFinite(raw.width) && raw.width > 0 ? raw.width : undefined
+    const height = Number.isFinite(raw.height) && raw.height > 0 ? raw.height : undefined
+    const zIndex = Number.isFinite(raw.zIndex) ? raw.zIndex : 0
+    return {
+      id: typeof raw.id === 'string' && raw.id ? raw.id : crypto.randomUUID(),
+      type,
+      x,
+      y,
+      width,
+      height,
+      content: typeof raw.content === 'string' ? raw.content : undefined,
+      src: typeof raw.src === 'string' ? raw.src : undefined,
+      labelName: typeof raw.labelName === 'string' ? raw.labelName : undefined,
+      formula: typeof raw.formula === 'string' ? raw.formula : undefined,
+      bgColor: typeof raw.bgColor === 'string' ? raw.bgColor : undefined,
+      borderRadius: Number.isFinite(raw.borderRadius) ? raw.borderRadius : undefined,
+      fontSize: Number.isFinite(raw.fontSize) ? raw.fontSize : undefined,
+      fontColor: typeof raw.fontColor === 'string' ? raw.fontColor : undefined,
+      fontFamily: typeof raw.fontFamily === 'string' ? raw.fontFamily : undefined,
+      lineHeight: Number.isFinite(raw.lineHeight) ? raw.lineHeight : undefined,
+      fontWeight: typeof raw.fontWeight === 'string' ? raw.fontWeight : undefined,
+      fontStyle: typeof raw.fontStyle === 'string' ? raw.fontStyle : undefined,
+      textDecoration: typeof raw.textDecoration === 'string' ? raw.textDecoration : undefined,
+      zIndex,
+    }
+  }
 
   const selectedBlock = computed(() =>
     blocks.value.find(b => b.id === selectedBlockId.value) || null
@@ -42,6 +129,7 @@ export const useCanvasStore = defineStore('canvas', () => {
   )
 
   function addBlock(block: Omit<BlockData, 'id' | 'zIndex'>) {
+    pushSnapshot()
     const id = crypto.randomUUID()
     blocks.value.push({
       ...block,
@@ -61,8 +149,21 @@ export const useCanvasStore = defineStore('canvas', () => {
   }
 
   function removeBlock(id: string) {
+    pushSnapshot()
     blocks.value = blocks.value.filter(b => b.id !== id)
     if (selectedBlockId.value === id) selectedBlockId.value = null
+    scheduleSave()
+  }
+
+  function removeBlocks(ids: string[]) {
+    if (ids.length === 0) return
+    pushSnapshot()
+    const idSet = new Set(ids)
+    blocks.value = blocks.value.filter(b => !idSet.has(b.id))
+    if (selectedBlockId.value && idSet.has(selectedBlockId.value)) {
+      selectedBlockId.value = null
+    }
+    selectedBlockIds.value = selectedBlockIds.value.filter(id => !idSet.has(id))
     scheduleSave()
   }
 
@@ -102,6 +203,7 @@ export const useCanvasStore = defineStore('canvas', () => {
   function alignBlocks(direction: 'left' | 'right' | 'top' | 'bottom' | 'h-center' | 'v-center') {
     const sel = selectedBlocks.value
     if (sel.length < 2) return
+    pushSnapshot()
 
     const rects = sel.map(b => ({ id: b.id, ...getBlockRect(b) }))
 
@@ -133,6 +235,7 @@ export const useCanvasStore = defineStore('canvas', () => {
   function distributeBlocks(axis: 'horizontal' | 'vertical') {
     const sel = selectedBlocks.value
     if (sel.length < 3) return
+    pushSnapshot()
 
     const rects = sel.map(b => ({ id: b.id, ...getBlockRect(b) }))
 
@@ -175,7 +278,13 @@ export const useCanvasStore = defineStore('canvas', () => {
 
   function bringToFront(id: string) {
     const block = blocks.value.find(b => b.id === id)
-    if (block) block.zIndex = ++zIndexCounter
+    if (block) {
+      block.zIndex = ++zIndexCounter
+      // Periodically normalize to prevent unbounded growth
+      if (zIndexCounter > blocks.value.length * 2) {
+        normalizeZIndices()
+      }
+    }
   }
 
   function loadBlocks(newBlocks: BlockData[]) {
@@ -184,11 +293,14 @@ export const useCanvasStore = defineStore('canvas', () => {
       clearTimeout(saveTimer)
       saveTimer = null
     }
-    // Direct assignment with deep-cloned data to guarantee new references
-    blocks.value = JSON.parse(JSON.stringify(newBlocks))
+    const validated: BlockData[] = []
+    for (const raw of newBlocks) {
+      const block = validateAndFixBlock(raw)
+      if (block) validated.push(block)
+    }
+    blocks.value = validated
     selectedBlockId.value = null
-    zIndexCounter = blocks.value.reduce((max, b) => Math.max(max, b.zIndex || 0), 10)
-    console.log('[CanvasStore] loadBlocks done, count:', blocks.value.length)
+    normalizeZIndices()
     nextTick(() => { suppressSave = false })
   }
 
@@ -198,7 +310,7 @@ export const useCanvasStore = defineStore('canvas', () => {
     const nav = useNavStore()
     const noteId = nav.activeNoteId
     if (!noteId) return
-    const snapshot = JSON.parse(JSON.stringify(blocks.value))
+    const snapshot = JSON.parse(JSON.stringify(toRaw(blocks.value)))
     saveTimer = setTimeout(async () => {
       try {
         const data = await loadAppData()
@@ -211,7 +323,7 @@ export const useCanvasStore = defineStore('canvas', () => {
           blocks: snapshot,
           updatedAt: now,
         }
-        data.groups = JSON.parse(JSON.stringify(nav.groups))
+        data.groups = JSON.parse(JSON.stringify(toRaw(nav.groups)))
         data.activeNoteId = noteId
         await saveAppData(data)
         // Sync timestamp to nav store for UI display
@@ -232,13 +344,12 @@ export const useCanvasStore = defineStore('canvas', () => {
         id: noteId,
         title: nav.getNoteTitle(noteId) || '未命名笔记',
         starred: nav.isNoteStarred(noteId),
-        blocks: JSON.parse(JSON.stringify(blocks.value)),
+        blocks: JSON.parse(JSON.stringify(toRaw(blocks.value))),
         updatedAt: Date.now(),
       }
-      data.groups = JSON.parse(JSON.stringify(nav.groups))
+      data.groups = JSON.parse(JSON.stringify(toRaw(nav.groups)))
       data.activeNoteId = noteId
       await saveAppData(data)
-      console.log('[CanvasStore] saveNoteById done:', noteId, 'blocks:', blocks.value.length)
     } catch (e) {
       console.error('Failed to save note:', noteId, e)
     }
@@ -250,7 +361,7 @@ export const useCanvasStore = defineStore('canvas', () => {
       const data = await loadAppData()
       if (!data) return
       data.activeNoteId = noteId
-      data.groups = JSON.parse(JSON.stringify(useNavStore().groups))
+      data.groups = JSON.parse(JSON.stringify(toRaw(useNavStore().groups)))
       await saveAppData(data)
     } catch (e) {
       console.warn('[CanvasStore] saveActiveNoteId failed:', e)
@@ -267,7 +378,7 @@ export const useCanvasStore = defineStore('canvas', () => {
       }
       loadBlocks(data.notes[noteId].blocks)
     } catch (e) {
-      console.warn('[CanvasStore] loadNote failed (non-Tauri env?), loading empty:', noteId)
+      // loadNote failed, loading empty
       loadBlocks([])
     }
   }
@@ -277,7 +388,7 @@ export const useCanvasStore = defineStore('canvas', () => {
     try {
       data = await loadAppData()
     } catch (e) {
-      console.warn('[CanvasStore] loadAppData failed (non-Tauri env?), using defaults')
+      // loadAppData failed, will use defaults
     }
     if (!data) {
       data = createDefaultData()
@@ -290,7 +401,7 @@ export const useCanvasStore = defineStore('canvas', () => {
     try {
       await saveAppData(data)
     } catch (e) {
-      console.warn('[CanvasStore] saveAppData skipped (non-Tauri env?)')
+      // saveAppData skipped in non-Tauri env
     }
     isLoaded.value = true
   }
@@ -326,5 +437,9 @@ export const useCanvasStore = defineStore('canvas', () => {
     saveNoteById,
     saveActiveNoteId,
     initFromStorage,
+    undo,
+    redo,
+    pushSnapshot,
+    removeBlocks,
   }
 })

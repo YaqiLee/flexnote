@@ -25,13 +25,10 @@ watch(() => nav.activeNoteId, (newId, oldId) => {
 
   const token = ++switchToken
   switchQueue = switchQueue.then(async () => {
-    console.log('[App] Switching note:', oldId, '->', newId)
     if (oldId) await canvas.saveNoteById(oldId)
     if (token !== switchToken) return
     await canvas.loadNote(newId)
-    // Persist activeNoteId immediately so refresh restores correct note
     await canvas.saveActiveNoteId(newId)
-    console.log('[App] Note loaded:', newId, 'blocks:', canvas.blocks.length)
   }).catch(error => {
     console.error('[App] Note switch failed:', newId, error)
   })
@@ -104,6 +101,7 @@ body {
 .canvas-container {
   flex: 1;
   position: relative;
-  overflow: hidden;
+  display: flex;
+  min-height: 0;
 }
 </style>

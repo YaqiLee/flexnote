@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { ref, nextTick, onMounted, onUnmounted, type Directive } from 'vue'
+import { ref, nextTick, onMounted, onUnmounted, toRaw, type Directive } from 'vue'
 import { useCanvasStore } from '../stores/canvas'
 
 // Directive that sets innerHTML only once on mount, avoiding v-html re-render conflicts with contenteditable
@@ -10,13 +10,53 @@ const vInitHtml: Directive<HTMLElement, string> = {
   // Do NOT update — let the browser manage contenteditable DOM
 }
 
+// Strip inline formatting tags so block-level CSS can apply uniformly
+function stripInlineFormatting(blockId: string) {
+  const el = document.querySelector(`[data-block-id="${blockId}"] .block-text`) as HTMLElement
+  if (!el) return
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT)
+  const toUnwrap: Element[] = []
+  let node: Node | null = walker.currentNode
+  while (node) {
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const tag = (node as Element).tagName.toLowerCase()
+      if (['b', 'i', 'u', 's', 'strike', 'del', 'strong', 'em', 'font', 'span'].includes(tag)) {
+        toUnwrap.push(node as Element)
+      }
+    }
+    node = walker.nextNode()
+  }
+  for (const elem of toUnwrap) {
+    const parent = elem.parentNode
+    if (parent) {
+      while (elem.firstChild) {
+        parent.insertBefore(elem.firstChild, elem)
+      }
+      parent.removeChild(elem)
+    }
+  }
+  el.querySelectorAll('*').forEach(child => {
+    child.removeAttribute('style')
+    child.removeAttribute('color')
+    child.removeAttribute('face')
+    child.removeAttribute('size')
+  })
+}
+
 const canvas = useCanvasStore()
 const canvasEl = ref<HTMLDivElement>()
+
+function clientToCanvas(clientX: number, clientY: number): { x: number; y: number } {
+  const rect = canvasEl.value!.getBoundingClientRect()
+  return { x: clientX - rect.left, y: clientY - rect.top }
+}
 
 // Dynamic canvas size
 const canvasWidth = ref(3000)
 const canvasHeight = ref(2000)
 const CANVAS_PADDING = 200
+const MIN_CANVAS_WIDTH = 3000
+const MIN_CANVAS_HEIGHT = 2000
 
 function expandCanvasIfNeeded() {
   let maxRight = 0
@@ -27,12 +67,33 @@ function expandCanvasIfNeeded() {
     if (right > maxRight) maxRight = right
     if (bottom > maxBottom) maxBottom = bottom
   }
-  // Expand with padding if blocks approach boundary
+  // Expand right/bottom with padding if blocks approach boundary
   if (maxRight + CANVAS_PADDING > canvasWidth.value) {
-    canvasWidth.value = Math.ceil((maxRight + CANVAS_PADDING) / 100) * 100
+    canvasWidth.value = Math.max(MIN_CANVAS_WIDTH, Math.ceil((maxRight + CANVAS_PADDING) / 100) * 100)
   }
   if (maxBottom + CANVAS_PADDING > canvasHeight.value) {
-    canvasHeight.value = Math.ceil((maxBottom + CANVAS_PADDING) / 100) * 100
+    canvasHeight.value = Math.max(MIN_CANVAS_HEIGHT, Math.ceil((maxBottom + CANVAS_PADDING) / 100) * 100)
+  }
+}
+
+// Check if viewport is near edges and expand proactively during panning
+function expandCanvasForViewport() {
+  const wrap = canvasEl.value?.parentElement
+  if (!wrap) return
+
+  const scrollLeft = wrap.scrollLeft
+  const scrollTop = wrap.scrollTop
+  const viewWidth = wrap.clientWidth
+  const viewHeight = wrap.clientHeight
+
+  // Expand right if scrolled near right edge
+  if (scrollLeft + viewWidth > canvasWidth.value - CANVAS_PADDING) {
+    canvasWidth.value = Math.max(MIN_CANVAS_WIDTH, Math.ceil((scrollLeft + viewWidth + CANVAS_PADDING) / 100) * 100)
+  }
+
+  // Expand bottom if scrolled near bottom edge
+  if (scrollTop + viewHeight > canvasHeight.value - CANVAS_PADDING) {
+    canvasHeight.value = Math.max(MIN_CANVAS_HEIGHT, Math.ceil((scrollTop + viewHeight + CANVAS_PADDING) / 100) * 100)
   }
 }
 
@@ -103,9 +164,9 @@ function onCanvasMouseDown(e: MouseEvent) {
     // No active tool: start marquee selection
     isMarquee = true
     document.body.style.userSelect = 'none'
-    const rect = canvasEl.value!.getBoundingClientRect()
-    marqueeStartX = e.clientX - rect.left
-    marqueeStartY = e.clientY - rect.top
+    const pos = clientToCanvas(e.clientX, e.clientY)
+    marqueeStartX = pos.x
+    marqueeStartY = pos.y
     marqueeRect.value = { left: marqueeStartX, top: marqueeStartY, width: 0, height: 0, visible: true }
   }
 }
@@ -164,16 +225,23 @@ function handleCanvasClick(e: MouseEvent) {
 
 function onTextBlur(blockId: string, e: FocusEvent) {
   const el = e.target as HTMLElement
+  // Save content with inline formatting preserved
   canvas.updateBlock(blockId, { content: el.innerHTML })
   // Exit editing state when blur happens
   if (canvas.editingBlockId === blockId) {
     canvas.setEditing(null)
+  }
+  // Clear text selection to prevent stale selection from affecting block-level styling
+  const sel = window.getSelection()
+  if (sel) {
+    sel.removeAllRanges()
   }
 }
 
 function onDragHandleDown(e: MouseEvent, blockId: string) {
   e.preventDefault()
   e.stopPropagation()
+  // Snapshot will be pushed in onMouseMove when drag actually starts
   if (e.shiftKey) {
     const ids = [...canvas.selectedBlockIds]
     const idx = ids.indexOf(blockId)
@@ -210,6 +278,10 @@ function onTextMouseDown(e: MouseEvent, blockId: string) {
     e.preventDefault()
     return
   }
+  // Single click enters editing mode directly for text blocks
+  if (!canvas.selectedBlockIds.includes(blockId)) {
+    canvas.selectBlock(blockId)
+  }
   canvas.setEditing(blockId)
 }
 
@@ -236,6 +308,7 @@ function onBlockMouseDown(e: MouseEvent, blockId: string) {
   }
 
   e.preventDefault()
+  // Snapshot will be pushed in onMouseMove when drag actually starts (dragMoved)
   isDragging = true
   dragBlockId = blockId
   dragStartX = e.clientX
@@ -248,6 +321,7 @@ function startResize(e: MouseEvent, blockId: string, dir: string) {
   e.stopPropagation()
   const block = canvas.blocks.find(b => b.id === blockId)
   if (!block) return
+  canvas.pushSnapshot()
   isResizing = true
   resizeBlockId = blockId
   resizeDir = dir
@@ -267,13 +341,14 @@ function onMouseMove(e: MouseEvent) {
     if (wrap) {
       wrap.scrollLeft = panScrollLeft - dx
       wrap.scrollTop = panScrollTop - dy
+      expandCanvasForViewport()
     }
     return
   }
   if (isMarquee && canvasEl.value) {
-    const rect = canvasEl.value.getBoundingClientRect()
-    const curX = e.clientX - rect.left
-    const curY = e.clientY - rect.top
+    const cur = clientToCanvas(e.clientX, e.clientY)
+    const curX = cur.x
+    const curY = cur.y
     const left = Math.min(marqueeStartX, curX)
     const top = Math.min(marqueeStartY, curY)
     const width = Math.abs(curX - marqueeStartX)
@@ -287,6 +362,7 @@ function onMouseMove(e: MouseEvent) {
 
     if (!dragMoved && (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD)) {
       dragMoved = true
+      canvas.pushSnapshot()
     }
 
     if (dragMoved) {
@@ -365,17 +441,22 @@ function onMouseUp() {
   resizeBlockId = null
 }
 
+// Clipboard for copy/paste
+let clipboardBlocks: import('../stores/canvas').BlockData[] = []
+
 function onKeyDown(e: KeyboardEvent) {
   const activeEl = document.activeElement as HTMLElement | null
   const isEditing = activeEl?.isContentEditable === true
+  const ctrl = e.ctrlKey || e.metaKey
 
+  // Space for panning (only when not editing)
   if (e.code === 'Space' && !isEditing) {
     e.preventDefault()
     spaceHeld = true
+    return
   }
-  if (e.key === 'Delete' && canvas.selectedBlockId && !isEditing) {
-    canvas.removeBlock(canvas.selectedBlockId)
-  }
+
+  // Escape: blur editing or deselect
   if (e.key === 'Escape') {
     if (isEditing) {
       activeEl?.blur()
@@ -383,6 +464,119 @@ function onKeyDown(e: KeyboardEvent) {
       canvas.setTool(null)
       canvas.selectBlock(null)
     }
+    return
+  }
+
+  // All shortcuts below are disabled while editing text
+  if (isEditing) return
+
+  // Use e.code for letter keys to avoid case sensitivity issues with Ctrl
+  // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y: Undo / Redo
+  if (ctrl && e.code === 'KeyZ' && !e.shiftKey) {
+    e.preventDefault()
+    canvas.undo()
+    return
+  }
+  if (ctrl && ((e.code === 'KeyZ' && e.shiftKey) || e.code === 'KeyY')) {
+    e.preventDefault()
+    canvas.redo()
+    return
+  }
+
+  // Ctrl+A: Select all
+  if (ctrl && e.code === 'KeyA') {
+    e.preventDefault()
+    canvas.selectBlocks(canvas.blocks.map(b => b.id))
+    return
+  }
+
+  // Ctrl+C: Copy selected blocks
+  if (ctrl && e.code === 'KeyC') {
+    if (canvas.selectedBlockIds.length > 0) {
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      const rawBlocks = toRaw(canvas.blocks)
+      clipboardBlocks = structuredClone(
+        rawBlocks.filter(b => canvas.selectedBlockIds.includes(b.id))
+      )
+    }
+    return
+  }
+
+  // Ctrl+V: Paste copied blocks (offset by 20px)
+  if (ctrl && e.code === 'KeyV') {
+    if (clipboardBlocks.length > 0) {
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      const offset = 20
+      const newIds: string[] = []
+      for (const src of clipboardBlocks) {
+        const { id: _id, zIndex: _z, ...rest } = src
+        const nid = canvas.addBlock({
+          ...rest,
+          x: src.x + offset,
+          y: src.y + offset,
+        })
+        newIds.push(nid)
+      }
+      canvas.selectBlocks(newIds)
+      expandCanvasIfNeeded()
+    }
+    return
+  }
+
+  // Ctrl+D: Duplicate selected blocks
+  if (ctrl && e.code === 'KeyD') {
+    if (canvas.selectedBlockIds.length > 0) {
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      const offset = 20
+      const newIds: string[] = []
+      const rawBlocks = toRaw(canvas.blocks)
+      for (const selId of canvas.selectedBlockIds) {
+        const src = rawBlocks.find(b => b.id === selId)
+        if (src) {
+          const { id: _id, zIndex: _z, ...rest } = src
+          const nid = canvas.addBlock({
+            ...rest,
+            x: src.x + offset,
+            y: src.y + offset,
+          })
+          newIds.push(nid)
+        }
+      }
+      canvas.selectBlocks(newIds)
+      expandCanvasIfNeeded()
+    }
+    return
+  }
+
+  // Delete / Backspace: Remove selected blocks
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    if (canvas.selectedBlockIds.length > 0) {
+      e.preventDefault()
+      canvas.removeBlocks([...canvas.selectedBlockIds])
+    }
+    return
+  }
+
+  // Arrow keys: Nudge selected blocks
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+    if (canvas.selectedBlockIds.length > 0) {
+      e.preventDefault()
+      const step = e.shiftKey ? 10 : 1
+      const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0
+      const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0
+      canvas.pushSnapshot()
+      for (const id of canvas.selectedBlockIds) {
+        const block = canvas.blocks.find(b => b.id === id)
+        if (block) {
+          canvas.updateBlock(id, { x: block.x + dx, y: block.y + dy })
+        }
+      }
+      expandCanvasIfNeeded()
+    }
+    return
   }
 }
 
@@ -425,6 +619,7 @@ onUnmounted(() => {
           borderRadius: (block.borderRadius || 0) + 'px',
           backgroundColor: block.bgColor || undefined,
           width: block.width ? block.width + 'px' : undefined,
+          height: block.height ? block.height + 'px' : undefined,
         }"
         @mousedown="onBlockMouseDown($event, block.id)"
       >
@@ -436,11 +631,20 @@ onUnmounted(() => {
           >⠿</div>
           <div
             class="block-text"
-            contenteditable="true"
-            :style="{ fontSize: (block.fontSize || 14) + 'px', color: block.fontColor || '#333333' }"
+            :contenteditable="canvas.editingBlockId === block.id ? 'true' : 'false'"
+            :style="{
+              fontSize: (block.fontSize || 14) + 'px',
+              color: block.fontColor || '#333333',
+              fontFamily: block.fontFamily || undefined,
+              lineHeight: block.lineHeight || 1.7,
+              fontWeight: block.fontWeight || undefined,
+              fontStyle: block.fontStyle || undefined,
+              textDecoration: block.textDecoration || undefined,
+            }"
             @focus="onTextFocus(block.id)"
             @blur="onTextBlur(block.id, $event)"
             @mousedown.stop="onTextMouseDown($event, block.id)"
+            @dblclick.stop="canvas.setEditing(block.id); ($event.target as HTMLElement).focus()"
             v-init-html="block.content || ''"
           />
         </div>
@@ -507,6 +711,8 @@ onUnmounted(() => {
   flex: 1;
   position: relative;
   overflow: auto;
+  min-height: 0;
+  min-width: 0;
   background: #fafbfd;
   background-image: radial-gradient(circle, #e0e0e0 1px, transparent 1px);
   background-size: 20px 20px;
@@ -515,6 +721,29 @@ onUnmounted(() => {
 
 .canvas-wrap:active {
   cursor: grabbing;
+}
+
+/* Custom scrollbar styles */
+.canvas-wrap::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.canvas-wrap::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.canvas-wrap::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+.canvas-wrap::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+.canvas-wrap::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 .canvas {
@@ -530,6 +759,7 @@ onUnmounted(() => {
   border: 2px solid transparent;
   cursor: grab;
   transition: border-color 0.12s, box-shadow 0.12s;
+  overflow: visible;
 }
 
 .block:hover { border-color: var(--primary-border); }
@@ -613,14 +843,14 @@ onUnmounted(() => {
 
 .rh {
   position: absolute;
-  z-index: 10;
+  z-index: 100;
 }
-.rh-n, .rh-s { left: 4px; right: 4px; height: 6px; cursor: ns-resize; }
-.rh-e, .rh-w { top: 4px; bottom: 4px; width: 6px; cursor: ew-resize; }
-.rh-n { top: -3px; }
-.rh-s { bottom: -3px; }
-.rh-e { right: -3px; }
-.rh-w { left: -3px; }
+.rh-n, .rh-s { left: 8px; right: 8px; height: 8px; cursor: ns-resize; }
+.rh-e, .rh-w { top: 8px; bottom: 8px; width: 8px; cursor: ew-resize; }
+.rh-n { top: -4px; }
+.rh-s { bottom: -4px; }
+.rh-e { right: -4px; }
+.rh-w { left: -4px; }
 .rh-ne, .rh-nw, .rh-se, .rh-sw {
   width: 8px; height: 8px;
   background: var(--primary);

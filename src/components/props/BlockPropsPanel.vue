@@ -75,7 +75,7 @@ function changeLabelType(name: string) {
     </template>
 
     <div class="props-sep"></div>
-    <button class="delete-btn" @click="canvas.removeBlock(canvas.selectedBlock!.id)" title="删除">🗑</button>
+    <button class="delete-btn" @click="canvas.selectedBlockId && canvas.removeBlock(canvas.selectedBlockId)" title="删除">🗑</button>
   </div>
 </template>
 
@@ -83,8 +83,8 @@ function changeLabelType(name: string) {
 .block-props-panel {
   display: flex;
   align-items: center;
-  gap: 5px;
-  flex-wrap: wrap;
+  gap: 6px;
+  flex-wrap: nowrap;
 }
 
 .block-props-panel label {
@@ -95,16 +95,19 @@ function changeLabelType(name: string) {
 }
 
 .block-props-panel button {
-  padding: 3px 8px;
+  padding: 4px 8px;
   border: 1px solid var(--border);
   background: var(--surface);
-  border-radius: 4px;
+  border-radius: 3px;
   cursor: pointer;
   font-size: 12px;
   color: var(--text);
-  transition: all 0.1s;
-  min-width: 28px;
-  text-align: center;
+  transition: all 0.12s;
+  min-width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .block-props-panel button:hover {
@@ -113,10 +116,10 @@ function changeLabelType(name: string) {
 }
 
 .block-props-panel input[type="color"] {
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 3px;
   cursor: pointer;
   padding: 0;
 }
@@ -128,18 +131,19 @@ function changeLabelType(name: string) {
 }
 
 .block-props-panel select {
-  padding: 3px 6px;
+  padding: 3px 4px;
   border: 1px solid var(--border);
-  border-radius: 4px;
-  font-size: 11px;
+  border-radius: 3px;
+  font-size: 12px;
   background: var(--surface);
+  height: 26px;
 }
 
 .props-sep {
   width: 1px;
-  height: 16px;
+  height: 20px;
   background: var(--border);
-  margin: 0 2px;
+  flex-shrink: 0;
 }
 
 .delete-btn {

@@ -94,7 +94,7 @@ onUnmounted(() => {
               active: nav.activeNoteId === item.id,
               starred: item.starred,
             }"
-            @click="() => { console.log('[Sidebar] click:', item.id, 'title:', item.title); nav.setActiveNote(item.id) }"
+            @click="() => nav.setActiveNote(item.id)"
             @contextmenu="showCtxMenu($event, 'note', item.id)"
           >
             <span

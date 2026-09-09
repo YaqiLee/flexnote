@@ -10,39 +10,6 @@ const vInitHtml: Directive<HTMLElement, string> = {
   // Do NOT update — let the browser manage contenteditable DOM
 }
 
-// Strip inline formatting tags so block-level CSS can apply uniformly
-function stripInlineFormatting(blockId: string) {
-  const el = document.querySelector(`[data-block-id="${blockId}"] .block-text`) as HTMLElement
-  if (!el) return
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT)
-  const toUnwrap: Element[] = []
-  let node: Node | null = walker.currentNode
-  while (node) {
-    if (node.nodeType === Node.ELEMENT_NODE) {
-      const tag = (node as Element).tagName.toLowerCase()
-      if (['b', 'i', 'u', 's', 'strike', 'del', 'strong', 'em', 'font', 'span'].includes(tag)) {
-        toUnwrap.push(node as Element)
-      }
-    }
-    node = walker.nextNode()
-  }
-  for (const elem of toUnwrap) {
-    const parent = elem.parentNode
-    if (parent) {
-      while (elem.firstChild) {
-        parent.insertBefore(elem.firstChild, elem)
-      }
-      parent.removeChild(elem)
-    }
-  }
-  el.querySelectorAll('*').forEach(child => {
-    child.removeAttribute('style')
-    child.removeAttribute('color')
-    child.removeAttribute('face')
-    child.removeAttribute('size')
-  })
-}
-
 const canvas = useCanvasStore()
 const canvasEl = ref<HTMLDivElement>()
 
@@ -227,15 +194,24 @@ function onTextBlur(blockId: string, e: FocusEvent) {
   const el = e.target as HTMLElement
   // Save content with inline formatting preserved
   canvas.updateBlock(blockId, { content: el.innerHTML })
-  // Exit editing state when blur happens
-  if (canvas.editingBlockId === blockId) {
-    canvas.setEditing(null)
+  // Delay exit to allow format bar controls to receive focus without losing editing state
+  const relatedTarget = e.relatedTarget as HTMLElement | null
+  if (relatedTarget && relatedTarget.closest('.text-format-bar')) {
+    return
   }
-  // Clear text selection to prevent stale selection from affecting block-level styling
-  const sel = window.getSelection()
-  if (sel) {
-    sel.removeAllRanges()
-  }
+  setTimeout(() => {
+    const activeEl = document.activeElement
+    if (activeEl && activeEl.closest('.text-format-bar')) {
+      return
+    }
+    if (canvas.editingBlockId === blockId) {
+      canvas.setEditing(null)
+      const sel = window.getSelection()
+      if (sel) {
+        sel.removeAllRanges()
+      }
+    }
+  }, 150)
 }
 
 function onDragHandleDown(e: MouseEvent, blockId: string) {

@@ -252,6 +252,9 @@ function setFontSize(val: string) {
 }
 
 function setFontColor(val: string) {
+  if (canvas.editingBlockId) {
+    restoreSelection()
+  }
   if (canvas.editingBlockId && hasTextSelection()) {
     document.execCommand('foreColor', false, val)
   } else if (canvas.selectedBlockId) {
@@ -287,10 +290,10 @@ function setLineHeight(val: string) {
   }">
     <!-- Font group -->
     <div class="format-group">
-      <select class="font-family-select" :value="currentFontFamily" @mousedown.stop @change="setFontFamily(($event.target as HTMLSelectElement).value)">
+      <select class="font-family-select" :value="currentFontFamily" @mousedown.stop="saveSelection()" @change="setFontFamily(($event.target as HTMLSelectElement).value)">
         <option v-for="f in FONT_FAMILIES" :key="f.value" :value="f.value">{{ f.name }}</option>
       </select>
-      <select class="font-size-select" :value="currentFontSize" @mousedown.stop @change="setFontSize(($event.target as HTMLSelectElement).value)">
+      <select class="font-size-select" :value="currentFontSize" @mousedown.stop="saveSelection()" @change="setFontSize(($event.target as HTMLSelectElement).value)">
         <option v-for="s in [10,11,12,13,14,15,16,18,20,22,24,28,32,36]" :key="s" :value="s">{{ s }}</option>
       </select>
     </div>
@@ -313,7 +316,7 @@ function setLineHeight(val: string) {
         <input type="color" :value="currentFontColor" @mousedown.prevent @input="setFontColor(($event.target as HTMLInputElement).value)" />
         <span class="color-label">A</span>
       </div>
-      <select class="line-height-select" :value="canvas.selectedBlock?.lineHeight || 1.7" @mousedown.stop @change="setLineHeight(($event.target as HTMLSelectElement).value)" title="行高">
+      <select class="line-height-select" :value="canvas.selectedBlock?.lineHeight || 1.7" @mousedown.stop="saveSelection()" @change="setLineHeight(($event.target as HTMLSelectElement).value)" title="行高">
         <option v-for="lh in [1.0, 1.2, 1.4, 1.5, 1.6, 1.7, 1.8, 2.0, 2.2, 2.5, 3.0]" :key="lh" :value="lh">{{ lh }}</option>
       </select>
     </div>

@@ -14,9 +14,9 @@ export default defineConfig(() => ({
   clearScreen: false,
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
-    port: 1420,
+    port: 1425,
     strictPort: true,
-    host: host || false,
+    host: host || "127.0.0.1",
     hmr: false, // Disable HMR to force full page reload on every change
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`

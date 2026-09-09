@@ -45,7 +45,7 @@ export const useCanvasStore = defineStore('canvas', () => {
   let isUndoRedoInProgress = false
 
   function cloneBlocks(): BlockData[] {
-    return structuredClone(toRaw(blocks.value))
+    return JSON.parse(JSON.stringify(toRaw(blocks.value)))
   }
 
   function pushSnapshot() {
@@ -310,7 +310,7 @@ export const useCanvasStore = defineStore('canvas', () => {
     const nav = useNavStore()
     const noteId = nav.activeNoteId
     if (!noteId) return
-    const snapshot = structuredClone(toRaw(blocks.value))
+    const snapshot = JSON.parse(JSON.stringify(toRaw(blocks.value)))
     saveTimer = setTimeout(async () => {
       try {
         const data = await loadAppData()
@@ -323,7 +323,7 @@ export const useCanvasStore = defineStore('canvas', () => {
           blocks: snapshot,
           updatedAt: now,
         }
-        data.groups = structuredClone(toRaw(nav.groups))
+        data.groups = JSON.parse(JSON.stringify(toRaw(nav.groups)))
         data.activeNoteId = noteId
         await saveAppData(data)
         // Sync timestamp to nav store for UI display
@@ -344,10 +344,10 @@ export const useCanvasStore = defineStore('canvas', () => {
         id: noteId,
         title: nav.getNoteTitle(noteId) || '未命名笔记',
         starred: nav.isNoteStarred(noteId),
-        blocks: structuredClone(toRaw(blocks.value)),
+        blocks: JSON.parse(JSON.stringify(toRaw(blocks.value))),
         updatedAt: Date.now(),
       }
-      data.groups = structuredClone(toRaw(nav.groups))
+      data.groups = JSON.parse(JSON.stringify(toRaw(nav.groups)))
       data.activeNoteId = noteId
       await saveAppData(data)
     } catch (e) {
@@ -361,7 +361,7 @@ export const useCanvasStore = defineStore('canvas', () => {
       const data = await loadAppData()
       if (!data) return
       data.activeNoteId = noteId
-      data.groups = structuredClone(toRaw(useNavStore().groups))
+      data.groups = JSON.parse(JSON.stringify(toRaw(useNavStore().groups)))
       await saveAppData(data)
     } catch (e) {
       console.warn('[CanvasStore] saveActiveNoteId failed:', e)
@@ -405,6 +405,53 @@ export const useCanvasStore = defineStore('canvas', () => {
     isLoaded.value = true
   }
 
+  async function saveNavData() {
+    if (!isLoaded.value) return
+    const nav = useNavStore()
+    try {
+      const data = await loadAppData()
+      if (!data) return
+      data.groups = JSON.parse(JSON.stringify(toRaw(nav.groups)))
+      data.activeNoteId = nav.activeNoteId
+
+      // Collect all note IDs currently in the nav tree
+      const validIds = new Set<string>()
+      function collectIds(items: typeof nav.groups[number]['items']) {
+        for (const item of items) {
+          validIds.add(item.id)
+          if (item.children) collectIds(item.children)
+        }
+      }
+      for (const group of nav.groups) {
+        collectIds(group.items)
+      }
+
+      // Prune notes that no longer exist in the nav tree
+      for (const noteId of Object.keys(data.notes)) {
+        if (!validIds.has(noteId)) {
+          delete data.notes[noteId]
+        }
+      }
+
+      // Ensure all nav items have corresponding note entries
+      for (const id of validIds) {
+        if (!data.notes[id]) {
+          data.notes[id] = {
+            id,
+            title: nav.getNoteTitle(id) || '未命名笔记',
+            starred: nav.isNoteStarred(id),
+            blocks: [],
+            updatedAt: Date.now(),
+          }
+        }
+      }
+
+      await saveAppData(data)
+    } catch (e) {
+      console.error('[CanvasStore] saveNavData failed:', e)
+    }
+  }
+
   watch(blocks, () => {
     if (suppressSave) return
     scheduleSave()
@@ -435,6 +482,7 @@ export const useCanvasStore = defineStore('canvas', () => {
     loadNote,
     saveNoteById,
     saveActiveNoteId,
+    saveNavData,
     initFromStorage,
     undo,
     redo,

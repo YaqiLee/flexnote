@@ -39,8 +39,8 @@ watch(() => nav.activeNoteId, (newId, oldId) => {
   <div class="app-layout">
     <Sidebar />
     <div class="main-area">
-      <Toolbar />
       <NoteHeader />
+      <Toolbar />
       <div class="canvas-container">
         <Canvas />
         <PropsPanel />

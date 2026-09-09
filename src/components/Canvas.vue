@@ -1,6 +1,7 @@
 ﻿<script setup lang="ts">
-import { ref, nextTick, onMounted, onUnmounted, toRaw, type Directive } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted, toRaw, type Directive } from 'vue'
 import { useCanvasStore } from '../stores/canvas'
+import { saveAsset, loadAsset, deleteAsset, assetUrl, isAssetRef, getAssetId } from '../services/assetStore'
 
 // Directive that sets innerHTML only once on mount, avoiding v-html re-render conflicts with contenteditable
 const vInitHtml: Directive<HTMLElement, string> = {
@@ -119,6 +120,36 @@ const pasteNotice = ref('')
 let pasteNoticeTimer: ReturnType<typeof setTimeout> | null = null
 const MAX_PASTE_IMAGE_BYTES = 10 * 1024 * 1024
 
+// Resolve asset:// references to displayable object URLs
+const resolvedImageUrls = ref<Record<string, string>>({})
+
+async function resolveImageUrl(src: string | undefined): Promise<string> {
+  if (!src) return ''
+  if (!isAssetRef(src)) return src
+  const cached = resolvedImageUrls.value[src]
+  if (cached) return cached
+  const blob = await loadAsset(getAssetId(src))
+  if (!blob) return ''
+  const url = URL.createObjectURL(blob)
+  resolvedImageUrls.value[src] = url
+  return url
+}
+
+function getImageSrc(block: { src?: string }): string {
+  if (!block.src) return ''
+  if (!isAssetRef(block.src)) return block.src
+  return resolvedImageUrls.value[block.src] || ''
+}
+
+// Pre-resolve all image blocks when they change
+watch(() => canvas.blocks.map(b => b.type === 'image' ? b.src : null).filter(Boolean), async (srcs) => {
+  for (const src of srcs) {
+    if (src && isAssetRef(src) && !resolvedImageUrls.value[src]) {
+      await resolveImageUrl(src)
+    }
+  }
+}, { immediate: true })
+
 function onCanvasMouseDown(e: MouseEvent) {
   const target = e.target as HTMLElement
   const isCanvasArea = target === canvasEl.value ||
@@ -173,34 +204,30 @@ function getPasteOrigin() {
   }
 }
 
-function readImageFile(file: File): Promise<{ src: string; width: number; height: number } | null> {
-  return new Promise(resolve => {
-    if (file.size > MAX_PASTE_IMAGE_BYTES) {
-      resolve(null)
-      return
+async function readImageFile(file: File): Promise<{ src: string; width: number; height: number } | null> {
+  if (file.size > MAX_PASTE_IMAGE_BYTES) return null
+  // Read dimensions using a temporary object URL
+  const tempUrl = URL.createObjectURL(file)
+  try {
+    const dims = await new Promise<{ w: number; h: number } | null>(resolve => {
+      const img = new Image()
+      img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight })
+      img.onerror = () => resolve(null)
+      img.src = tempUrl
+    })
+    if (!dims) return null
+    // Persist to asset store
+    const id = crypto.randomUUID()
+    await saveAsset(id, file)
+    const scale = Math.min(1, 400 / dims.w, 300 / dims.h)
+    return {
+      src: assetUrl(id),
+      width: Math.max(1, Math.round(dims.w * scale)),
+      height: Math.max(1, Math.round(dims.h * scale)),
     }
-    const reader = new FileReader()
-    reader.onload = () => {
-      const src = typeof reader.result === 'string' ? reader.result : ''
-      if (!src) {
-        resolve(null)
-        return
-      }
-      const image = new Image()
-      image.onload = () => {
-        const scale = Math.min(1, 400 / image.naturalWidth, 300 / image.naturalHeight)
-        resolve({
-          src,
-          width: Math.max(1, Math.round(image.naturalWidth * scale)),
-          height: Math.max(1, Math.round(image.naturalHeight * scale)),
-        })
-      }
-      image.onerror = () => resolve(null)
-      image.src = src
-    }
-    reader.onerror = () => resolve(null)
-    reader.readAsDataURL(file)
-  })
+  } finally {
+    URL.revokeObjectURL(tempUrl)
+  }
 }
 
 async function onCanvasPaste(e: ClipboardEvent) {
@@ -605,9 +632,9 @@ function onKeyDown(e: KeyboardEvent) {
       e.preventDefault()
       e.stopImmediatePropagation()
       const rawBlocks = toRaw(canvas.blocks)
-      clipboardBlocks = structuredClone(
+      clipboardBlocks = JSON.parse(JSON.stringify(
         rawBlocks.filter(b => canvas.selectedBlockIds.includes(b.id))
-      )
+      ))
     }
     return
   }
@@ -664,7 +691,21 @@ function onKeyDown(e: KeyboardEvent) {
   if (e.key === 'Delete' || e.key === 'Backspace') {
     if (canvas.selectedBlockIds.length > 0) {
       e.preventDefault()
-      canvas.removeBlocks([...canvas.selectedBlockIds])
+      const idsToRemove = [...canvas.selectedBlockIds]
+      // Clean up assets for deleted image blocks
+      for (const id of idsToRemove) {
+        const block = canvas.blocks.find(b => b.id === id)
+        if (block?.type === 'image' && block.src && isAssetRef(block.src)) {
+          const assetId = getAssetId(block.src)
+          deleteAsset(assetId).catch(() => {})
+          const cachedUrl = resolvedImageUrls.value[block.src]
+          if (cachedUrl) {
+            URL.revokeObjectURL(cachedUrl)
+            delete resolvedImageUrls.value[block.src]
+          }
+        }
+      }
+      canvas.removeBlocks(idsToRemove)
     }
     return
   }
@@ -712,6 +753,11 @@ onUnmounted(() => {
   window.removeEventListener('keyup', onKeyUp)
   window.removeEventListener('paste', onCanvasPaste)
   if (pasteNoticeTimer) clearTimeout(pasteNoticeTimer)
+  // Revoke all object URLs to prevent memory leaks
+  for (const url of Object.values(resolvedImageUrls.value)) {
+    URL.revokeObjectURL(url)
+  }
+  resolvedImageUrls.value = {}
 })
 </script>
 
@@ -762,7 +808,7 @@ onUnmounted(() => {
         </div>
 
         <div v-else-if="block.type === 'image'" class="block-image">
-          <img :src="block.src || ''" draggable="false" />
+          <img :src="getImageSrc(block)" draggable="false" />
         </div>
 
         <div
@@ -924,8 +970,9 @@ onUnmounted(() => {
   cursor: text;
 }
 
-.block-image { padding: 3px; display: flex; align-items: center; justify-content: center; }
-.block-image img { max-width: 400px; max-height: 300px; pointer-events: none; display: block; }
+.block:has(.block-image) { overflow: hidden; }
+.block-image { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+.block-image img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; display: block; }
 
 .block-label {
   padding: 4px 14px;
@@ -958,22 +1005,30 @@ onUnmounted(() => {
   position: absolute;
   z-index: 100;
 }
-.rh-n, .rh-s { left: 8px; right: 8px; height: 8px; cursor: ns-resize; }
-.rh-e, .rh-w { top: 8px; bottom: 8px; width: 8px; cursor: ew-resize; }
-.rh-n { top: -4px; }
-.rh-s { bottom: -4px; }
-.rh-e { right: -4px; }
-.rh-w { left: -4px; }
+.rh-n, .rh-s { left: 12px; right: 12px; height: 14px; cursor: ns-resize; }
+.rh-e, .rh-w { top: 12px; bottom: 12px; width: 14px; cursor: ew-resize; }
+.rh-n { top: -7px; }
+.rh-s { bottom: -7px; }
+.rh-e { right: -7px; }
+.rh-w { left: -7px; }
 .rh-ne, .rh-nw, .rh-se, .rh-sw {
+  width: 20px; height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.rh-ne::after, .rh-nw::after, .rh-se::after, .rh-sw::after {
+  content: '';
   width: 8px; height: 8px;
   background: var(--primary);
   border: 1.5px solid #fff;
   border-radius: 50%;
+  pointer-events: none;
 }
-.rh-ne { top: -4px; right: -4px; cursor: nesw-resize; }
-.rh-nw { top: -4px; left: -4px; cursor: nwse-resize; }
-.rh-se { bottom: -4px; right: -4px; cursor: nwse-resize; }
-.rh-sw { bottom: -4px; left: -4px; cursor: nesw-resize; }
+.rh-ne { top: -10px; right: -10px; cursor: nesw-resize; }
+.rh-nw { top: -10px; left: -10px; cursor: nwse-resize; }
+.rh-se { bottom: -10px; right: -10px; cursor: nwse-resize; }
+.rh-sw { bottom: -10px; left: -10px; cursor: nesw-resize; }
 
 .canvas-hint {
   position: absolute;

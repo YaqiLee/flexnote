@@ -67,6 +67,10 @@ export function execForeColor(color: string): void {
   document.execCommand('foreColor', false, color)
 }
 
+export function execHiliteColor(color: string): void {
+  document.execCommand('hiliteColor', false, color)
+}
+
 export function execFontName(fontName: string): void {
   document.execCommand('fontName', false, fontName || 'sans-serif')
 }

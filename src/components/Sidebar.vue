@@ -1,8 +1,17 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { useNavStore } from '../stores/nav'
+import { useCanvasStore } from '../stores/canvas'
+import NavTreeItem from './NavTreeItem.vue'
 
 const nav = useNavStore()
+const canvas = useCanvasStore()
+
+// Drag state
+const dragItemId = ref<string | null>(null)
+const dragOverId = ref<string | null>(null)
+const dragOverType = ref<'item' | 'group' | null>(null)
+const dragPosition = ref<'before' | 'after' | 'inside' | null>(null)
 
 // Context menu state
 const ctxMenu = ref({ visible: false, x: 0, y: 0, type: '' as 'group' | 'note', targetId: '' })
@@ -74,14 +83,20 @@ function handleDialogKeydown(e: KeyboardEvent) {
 
 async function handleAddGroup() {
   const name = await openPrompt('新建分组', '', '请输入分组名称')
-  if (typeof name === 'string' && name) nav.addGroup(name)
+  if (typeof name === 'string' && name) {
+    nav.addGroup(name)
+    canvas.saveNavData()
+  }
 }
 
 async function handleRenameGroup() {
   const group = nav.groups.find(g => g.id === ctxMenu.value.targetId)
   if (!group) return
   const name = await openPrompt('重命名分组', group.name, '请输入分组名称')
-  if (typeof name === 'string' && name) nav.renameGroup(ctxMenu.value.targetId, name)
+  if (typeof name === 'string' && name) {
+    nav.renameGroup(ctxMenu.value.targetId, name)
+    canvas.saveNavData()
+  }
 }
 
 async function handleDeleteGroup() {
@@ -89,6 +104,7 @@ async function handleDeleteGroup() {
   if (!group) return
   if (await openConfirm('删除分组', `确定删除分组「${group.name}」及其所有笔记？`, true)) {
     nav.deleteGroup(ctxMenu.value.targetId)
+    canvas.saveNavData()
   }
 }
 
@@ -97,6 +113,17 @@ async function handleAddNote(groupId: string) {
   if (typeof title === 'string' && title) {
     const id = nav.addNote(groupId, title)
     if (id) nav.setActiveNote(id)
+    canvas.saveNavData()
+  }
+}
+
+async function handleAddChildNote() {
+  const parentId = ctxMenu.value.targetId
+  const title = await openPrompt('新建子笔记', '', '请输入笔记标题')
+  if (typeof title === 'string' && title) {
+    const id = nav.addChildNote(parentId, title)
+    if (id) nav.setActiveNote(id)
+    canvas.saveNavData()
   }
 }
 
@@ -104,7 +131,10 @@ async function handleRenameNote() {
   const title = nav.getNoteTitle(ctxMenu.value.targetId)
   if (!title) return
   const newTitle = await openPrompt('重命名笔记', title, '请输入笔记标题')
-  if (typeof newTitle === 'string' && newTitle) nav.renameNote(ctxMenu.value.targetId, newTitle)
+  if (typeof newTitle === 'string' && newTitle) {
+    nav.renameNote(ctxMenu.value.targetId, newTitle)
+    canvas.saveNavData()
+  }
 }
 
 async function handleDeleteNote() {
@@ -112,7 +142,163 @@ async function handleDeleteNote() {
   if (!title) return
   if (await openConfirm('删除笔记', `确定删除笔记「${title}」？`, true)) {
     nav.deleteNote(ctxMenu.value.targetId)
+    canvas.saveNavData()
   }
+}
+
+// Pointer-based drag state
+let dragPointerStartX = 0
+let dragPointerStartY = 0
+let isDragging = false
+const DRAG_THRESHOLD = 5
+
+function onTreePointerDown(e: PointerEvent) {
+  if (e.button !== 0) return
+  const target = e.target as HTMLElement
+
+  // Determine drag source: item or group title
+  const itemWrapper = target.closest('[data-nav-id][data-nav-type="item"]') as HTMLElement | null
+  const groupTitle = target.closest('.tree-group-title') as HTMLElement | null
+  const groupEl = target.closest('.tree-group[data-group-index]') as HTMLElement | null
+
+  let sourceId: string | null = null
+  let sourceIsGroup = false
+
+  if (itemWrapper) {
+    sourceId = itemWrapper.getAttribute('data-nav-id')!
+  } else if (groupTitle && groupEl) {
+    const gIdx = groupEl.getAttribute('data-group-index')!
+    sourceId = '__group__' + gIdx
+    sourceIsGroup = true
+  }
+
+  if (!sourceId) return
+
+  dragPointerStartX = e.clientX
+  dragPointerStartY = e.clientY
+  dragItemId.value = sourceId
+
+  const onPointerMove = (me: PointerEvent) => {
+    const dx = me.clientX - dragPointerStartX
+    const dy = me.clientY - dragPointerStartY
+    if (!isDragging && Math.sqrt(dx * dx + dy * dy) > DRAG_THRESHOLD) {
+      isDragging = true
+    }
+    if (!isDragging || !dragItemId.value) return
+
+    const el = document.elementFromPoint(me.clientX, me.clientY) as HTMLElement | null
+    if (!el) {
+      dragOverId.value = null
+      dragOverType.value = null
+      dragPosition.value = null
+      return
+    }
+
+    if (sourceIsGroup) {
+      // Group dragging: only reorder groups
+      const targetGroup = el.closest('.tree-group[data-group-index]') as HTMLElement | null
+      if (targetGroup) {
+        const targetIdx = parseInt(targetGroup.getAttribute('data-group-index')!)
+        const rect = targetGroup.getBoundingClientRect()
+        const y = me.clientY - rect.top
+        dragOverId.value = '__group__' + targetIdx
+        dragOverType.value = 'group'
+        dragPosition.value = y < rect.height / 2 ? 'before' : 'after'
+      } else {
+        dragOverId.value = null
+        dragOverType.value = null
+        dragPosition.value = null
+      }
+    } else {
+      // Item dragging
+      const wrapper = el.closest('[data-nav-id]') as HTMLElement | null
+      const groupTitleEl = el.closest('.tree-group-title[data-nav-id]') as HTMLElement | null
+
+      if (groupTitleEl) {
+        const groupId = groupTitleEl.getAttribute('data-nav-id')!
+        if (groupId !== dragItemId.value) {
+          dragOverId.value = groupId
+          dragOverType.value = 'group'
+          dragPosition.value = 'inside'
+        }
+      } else if (wrapper) {
+        const targetId = wrapper.getAttribute('data-nav-id')!
+        const targetType = wrapper.getAttribute('data-nav-type') as 'item' | 'group' | null
+        if (targetId !== dragItemId.value) {
+          dragOverId.value = targetId
+          dragOverType.value = targetType || 'item'
+          const rect = wrapper.getBoundingClientRect()
+          const y = me.clientY - rect.top
+          const h = rect.height
+          if (targetType === 'group') {
+            dragPosition.value = 'inside'
+          } else if (y < h * 0.3) {
+            dragPosition.value = 'before'
+          } else if (y > h * 0.7) {
+            dragPosition.value = 'after'
+          } else {
+            dragPosition.value = 'inside'
+          }
+        }
+      } else {
+        dragOverId.value = null
+        dragOverType.value = null
+        dragPosition.value = null
+      }
+    }
+  }
+
+  const onPointerUp = () => {
+    document.removeEventListener('pointermove', onPointerMove)
+    document.removeEventListener('pointerup', onPointerUp)
+
+    if (isDragging && dragItemId.value && dragOverId.value) {
+      const srcId = dragItemId.value
+      const tgtId = dragOverId.value
+
+      if (sourceIsGroup && tgtId.startsWith('__group__')) {
+        const fromIndex = parseInt(srcId.replace('__group__', ''))
+        let toIndex = parseInt(tgtId.replace('__group__', ''))
+        if (dragPosition.value === 'after') toIndex++
+        if (fromIndex < toIndex) toIndex--
+        nav.reorderGroup(fromIndex, toIndex)
+      } else if (!sourceIsGroup) {
+        const isGroupTarget = dragOverType.value === 'group'
+        if (isGroupTarget) {
+          nav.moveItem(srcId, tgtId, true)
+        } else if (dragPosition.value === 'inside') {
+          nav.moveItem(srcId, tgtId, false)
+        } else {
+          let targetParent: ReturnType<typeof nav.findParentArray> = null
+          let sourceParent: ReturnType<typeof nav.findParentArray> = null
+          for (const g of nav.groups) {
+            if (!targetParent) targetParent = nav.findParentArray(g.items, tgtId)
+            if (!sourceParent) sourceParent = nav.findParentArray(g.items, srcId)
+            if (targetParent && sourceParent) break
+          }
+          if (targetParent && sourceParent && targetParent === sourceParent) {
+            const fromIdx = targetParent.findIndex(i => i.id === srcId)
+            let toIdx = targetParent.findIndex(i => i.id === tgtId)
+            if (dragPosition.value === 'after') toIdx++
+            if (fromIdx < toIdx) toIdx--
+            nav.reorderItem(targetParent, fromIdx, toIdx)
+          } else {
+            nav.moveItem(srcId, tgtId, false)
+          }
+        }
+      }
+      canvas.saveNavData()
+    }
+
+    dragItemId.value = null
+    dragOverId.value = null
+    dragOverType.value = null
+    dragPosition.value = null
+    isDragging = false
+  }
+
+  document.addEventListener('pointermove', onPointerMove)
+  document.addEventListener('pointerup', onPointerUp)
 }
 
 onMounted(() => {
@@ -130,11 +316,27 @@ onUnmounted(() => {
       <button class="header-add" @click="handleAddGroup" title="新建分组">+</button>
     </div>
 
-    <div class="tree">
-      <div v-for="group in nav.groups" :key="group.id" class="tree-group">
+    <div class="tree" @pointerdown="onTreePointerDown">
+      <div
+        v-for="(group, gIdx) in nav.groups"
+        :key="group.id"
+        class="tree-group"
+        :data-group-index="gIdx"
+        :data-group-id="group.id"
+        :class="{
+          'drag-over-group': dragOverId === '__group__' + gIdx && dragItemId?.startsWith('__group__'),
+          'drag-pos-before': dragOverId === '__group__' + gIdx && dragPosition === 'before',
+          'drag-pos-after': dragOverId === '__group__' + gIdx && dragPosition === 'after',
+        }"
+      >
         <div
           class="tree-group-title"
-          :class="{ collapsed: group.collapsed }"
+          :data-nav-id="group.id"
+          :data-nav-type="'group'"
+          :class="{
+            collapsed: group.collapsed,
+            'drag-over-inside': dragOverId === group.id && dragOverType === 'group' && !dragItemId?.startsWith('__group__'),
+          }"
           @click="nav.toggleGroup(group.id)"
           @contextmenu="showCtxMenu($event, 'group', group.id)"
         >
@@ -142,23 +344,20 @@ onUnmounted(() => {
           📁 {{ group.name }}
         </div>
         <div v-show="!group.collapsed" class="tree-items">
-          <div
-            v-for="item in group.items"
-            :key="item.id"
-            class="tree-item"
-            :class="{
-              active: nav.activeNoteId === item.id,
-              starred: item.starred,
-            }"
-            @click="() => nav.setActiveNote(item.id)"
-            @contextmenu="showCtxMenu($event, 'note', item.id)"
-          >
-            <span
-              class="star-icon"
-              @click.stop="nav.toggleStar(item.id)"
-            >★</span>
-            📄 {{ item.title }}
-          </div>
+          <template v-for="item in group.items" :key="item.id">
+            <NavTreeItem
+              :item="item"
+              :depth="0"
+              :active-id="nav.activeNoteId"
+              :drag-item-id="dragItemId"
+              :drag-over-id="dragOverId"
+              :drag-position="dragPosition"
+              @select="nav.setActiveNote($event)"
+              @contextmenu="showCtxMenu($event, 'note', item.id)"
+              @toggle-star="nav.toggleStar($event)"
+              @toggle-collapsed="nav.toggleItemCollapsed($event)"
+            />
+          </template>
           <div class="add-btn" @click="handleAddNote(group.id)">+ 添加页</div>
         </div>
       </div>
@@ -183,6 +382,7 @@ onUnmounted(() => {
           <div class="ctx-item danger" @click="handleDeleteGroup">🗑 删除分组</div>
         </template>
         <template v-else>
+          <div class="ctx-item" @click="handleAddChildNote">📄 新建子笔记</div>
           <div class="ctx-item" @click="handleRenameNote">✏️ 重命名</div>
           <div class="ctx-item danger" @click="handleDeleteNote">🗑 删除笔记</div>
         </template>

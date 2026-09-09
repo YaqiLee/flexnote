@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useCanvasStore } from '../stores/canvas'
+import { saveAsset, assetUrl } from '../services/assetStore'
 
 const canvas = useCanvasStore()
 
@@ -12,50 +13,58 @@ function triggerImage() {
   input?.click()
 }
 
-function handleImageUpload(e: Event) {
+async function handleImageUpload(e: Event) {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
   if (!file) return
-  const reader = new FileReader()
-  reader.onload = () => {
-    canvas.setPendingImage(reader.result as string)
-    canvas.setTool('image')
-  }
-  reader.readAsDataURL(file)
+  const id = crypto.randomUUID()
+  await saveAsset(id, file)
+  canvas.setPendingImage(assetUrl(id))
+  canvas.setTool('image')
   input.value = ''
 }
 </script>
 
 <template>
   <div class="top-toolbar">
-    <button
-      class="tool-btn"
-      :class="{ active: canvas.currentTool === 'text' }"
-      @click="setTool('text')"
-    >
-      📝 文本
-    </button>
-    <button
-      class="tool-btn"
-      :class="{ active: canvas.currentTool === 'image' }"
-      @click="triggerImage"
-    >
-      🖼 图片
-    </button>
-    <button
-      class="tool-btn"
-      :class="{ active: canvas.currentTool === 'label' }"
-      @click="setTool('label')"
-    >
-      🏷 标签
-    </button>
-    <button
-      class="tool-btn"
-      :class="{ active: canvas.currentTool === 'formula' }"
-      @click="setTool('formula')"
-    >
-      ∑ 公式
-    </button>
+    <div class="tool-group">
+      <button
+        class="tool-btn"
+        :class="{ active: canvas.currentTool === 'text' }"
+        title="文本工具 (T)"
+        @click="setTool('text')"
+      >
+        <span class="tool-icon">📝</span>
+        <span class="tool-label">文本</span>
+      </button>
+      <button
+        class="tool-btn"
+        :class="{ active: canvas.currentTool === 'image' }"
+        title="插入图片"
+        @click="triggerImage"
+      >
+        <span class="tool-icon">🖼</span>
+        <span class="tool-label">图片</span>
+      </button>
+      <button
+        class="tool-btn"
+        :class="{ active: canvas.currentTool === 'label' }"
+        title="标签"
+        @click="setTool('label')"
+      >
+        <span class="tool-icon">🏷</span>
+        <span class="tool-label">标签</span>
+      </button>
+      <button
+        class="tool-btn"
+        :class="{ active: canvas.currentTool === 'formula' }"
+        title="公式"
+        @click="setTool('formula')"
+      >
+        <span class="tool-icon">∑</span>
+        <span class="tool-label">公式</span>
+      </button>
+    </div>
     <input
       id="imgInput"
       type="file"
@@ -63,59 +72,56 @@ function handleImageUpload(e: Event) {
       style="display: none"
       @change="handleImageUpload"
     />
-    <div class="tool-sep"></div>
-    <span class="toolbar-hint">Esc 取消工具 · Delete 删除 · 双击编辑文本</span>
   </div>
 </template>
 
 <style scoped>
 .top-toolbar {
-  padding: 8px 20px;
+  padding: 0 16px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
-  gap: 4px;
   z-index: 20;
+  height: 40px;
+}
+
+.tool-group {
+  display: flex;
+  gap: 4px;
 }
 
 .tool-btn {
-  padding: 6px 14px;
-  border: 1px solid var(--border);
-  background: var(--surface);
+  padding: 4px 10px;
+  border: none;
+  background: transparent;
   border-radius: 6px;
   cursor: pointer;
-  font-size: 13px;
-  color: var(--text);
+  font-size: 12px;
+  color: var(--text-secondary);
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   transition: all 0.15s;
+  height: 30px;
 }
 
 .tool-btn:hover {
-  background: var(--primary-light);
-  border-color: var(--primary-border);
-  color: var(--primary);
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 .tool-btn.active {
   background: var(--primary-light);
-  border-color: var(--primary);
   color: var(--primary);
-  font-weight: 600;
 }
 
-.tool-sep {
-  width: 1px;
-  height: 22px;
-  background: var(--border);
-  margin: 0 6px;
+.tool-icon {
+  font-size: 14px;
+  line-height: 1;
 }
 
-.toolbar-hint {
-  font-size: 11px;
-  color: var(--text-secondary);
-  margin-left: auto;
+.tool-label {
+  font-weight: 500;
 }
 </style>

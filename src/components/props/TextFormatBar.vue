@@ -8,6 +8,7 @@ import {
   execUnderline,
   execStrikeThrough,
   execForeColor,
+  execHiliteColor,
   execFontName,
   execFontSize,
 } from '../../utils/text-format'
@@ -33,6 +34,7 @@ const isStrikeThrough = ref(false)
 const currentFontFamily = ref('')
 const currentFontSize = ref(14)
 const currentFontColor = ref('#333333')
+const currentHiliteColor = ref('transparent')
 
 function updateSelectionState() {
   const sel = window.getSelection()
@@ -46,6 +48,7 @@ function updateSelectionState() {
     currentFontFamily.value = block?.fontFamily || ''
     currentFontSize.value = block?.fontSize || 14
     currentFontColor.value = block?.fontColor || '#333333'
+    currentHiliteColor.value = block?.bgColor || 'transparent'
     return
   }
   // Check computed style at selection
@@ -72,6 +75,20 @@ function updateSelectionState() {
       } else if (colorVal.startsWith('#')) {
         currentFontColor.value = colorVal
       }
+    }
+    const hiliteVal = document.queryCommandValue('hiliteColor')
+    if (hiliteVal) {
+      const rgbMatch = hiliteVal.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
+      if (rgbMatch) {
+        const r = parseInt(rgbMatch[1]).toString(16).padStart(2, '0')
+        const g = parseInt(rgbMatch[2]).toString(16).padStart(2, '0')
+        const b = parseInt(rgbMatch[3]).toString(16).padStart(2, '0')
+        currentHiliteColor.value = `#${r}${g}${b}`
+      } else if (hiliteVal.startsWith('#')) {
+        currentHiliteColor.value = hiliteVal
+      }
+    } else {
+      currentHiliteColor.value = 'transparent'
     }
   } catch {
     // queryCommandState may throw in some contexts
@@ -244,6 +261,30 @@ function setFontFamily(val: string) {
   updateSelectionState()
 }
 
+function setHiliteColor(val: string) {
+  if (canvas.editingBlockId) {
+    restoreSelection()
+  }
+  if (canvas.editingBlockId && hasTextSelection()) {
+    execHiliteColor(val)
+  } else if (canvas.selectedBlockId) {
+    canvas.updateBlock(canvas.selectedBlockId, { bgColor: val })
+  }
+  updateSelectionState()
+}
+
+function clearHilite() {
+  if (canvas.editingBlockId) {
+    restoreSelection()
+  }
+  if (canvas.editingBlockId && hasTextSelection()) {
+    execHiliteColor('transparent')
+  } else if (canvas.selectedBlockId) {
+    canvas.updateBlock(canvas.selectedBlockId, { bgColor: undefined })
+  }
+  updateSelectionState()
+}
+
 function setLineHeight(val: string) {
   // Line height applies to whole block (no execCommand equivalent)
   if (canvas.selectedBlockId) {
@@ -285,6 +326,11 @@ function setLineHeight(val: string) {
         <input type="color" :value="currentFontColor" @mousedown.prevent @input="setFontColor(($event.target as HTMLInputElement).value)" />
         <span class="color-label">A</span>
       </div>
+      <div class="color-picker-wrap hilite" title="高亮背景色" @mousedown.stop>
+        <input type="color" :value="currentHiliteColor === 'transparent' ? '#ffff00' : currentHiliteColor" @mousedown.prevent @input="setHiliteColor(($event.target as HTMLInputElement).value)" />
+        <span class="color-label hilite-label">⌶</span>
+      </div>
+      <button v-if="currentHiliteColor !== 'transparent'" class="clear-hilite-btn" title="清除高亮" @mousedown="saveSelection(); $event.preventDefault()" @click="clearHilite">✕</button>
       <select class="line-height-select" :value="canvas.selectedBlock?.lineHeight || 1.7" @mousedown.stop="saveSelection()" @change="setLineHeight(($event.target as HTMLSelectElement).value)" title="行高">
         <option v-for="lh in [1.0, 1.2, 1.4, 1.5, 1.6, 1.7, 1.8, 2.0, 2.2, 2.5, 3.0]" :key="lh" :value="lh">{{ lh }}</option>
       </select>
@@ -395,6 +441,32 @@ function setLineHeight(val: string) {
   font-weight: 700;
   color: var(--text);
   pointer-events: none;
+}
+
+.color-picker-wrap.hilite .hilite-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.clear-hilite-btn {
+  padding: 2px 5px;
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-secondary);
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s;
+}
+
+.clear-hilite-btn:hover {
+  background: var(--danger-light);
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .props-sep {

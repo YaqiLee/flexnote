@@ -1,7 +1,7 @@
 # FlexNote 功能差距分析
 
 > 对比 OneNote、Notion、Obsidian Canvas、Miro、Apple Freeform 等主流笔记/白板工具
-> 更新日期：2026-09-08
+> 更新日期：2026-09-09
 
 ## 一、已实现功能
 
@@ -21,7 +21,9 @@
 | 对齐工具（左/右/顶/底/水平居中/垂直居中） | ✅ |
 | 均分工具（横向/纵向） | ✅ |
 | 属性面板（字体/颜色/背景/圆角等） | ✅ |
-| 文本格式栏（加粗/斜体/下划线/字号/颜色） | ✅ |
+| 文本格式栏（加粗/斜体/下划线/删除线/字号/行高/颜色） | ✅ |
+| 直接粘贴文本/图片到画布 | ✅ |
+| 自定义确认/提示对话框 | ✅ |
 | 空格键平移画布 | ✅ |
 | 中键平移画布 | ✅ |
 | 画布自动扩展 | ✅ |
@@ -36,9 +38,9 @@
 
 | 功能 | OneNote | Notion | Obsidian Canvas | Miro | FlexNote | 优先级 |
 |------|---------|--------|-----------------|------|----------|--------|
-| 撤销/重做 (Ctrl+Z/Y) | ✅ | ✅ | ✅ | ✅ | ❌ | 🔴 P0 |
+| 撤销/重做 (Ctrl+Z/Y) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 复制/粘贴块 | ✅ | ✅ | ✅ | ✅ | ❌ | 🔴 P0 |
-| 键盘快捷键（Delete/Ctrl+A/Ctrl+C/V） | ✅ | ✅ | ✅ | ✅ | ⚠️ 仅 Delete/Esc | 🔴 P0 |
+| 键盘快捷键（Delete/Ctrl+A/Ctrl+C/V） | ✅ | ✅ | ✅ | ✅ | ⚠️ Delete/Esc/粘贴可用，Ctrl+A/C未实现 | 🔴 P0 |
 | 文本列表（有序/无序） | ✅ | ✅ | ✅ | ✅ | ❌ | 🟡 P1 |
 | 文本超链接 | ✅ | ✅ | ✅ | ✅ | ❌ | 🟡 P1 |
 | Markdown 快捷输入 | ❌ | ✅ | ✅ | ❌ | ❌ | 🟢 P2 |
@@ -83,17 +85,19 @@
 | 暗色模式 | ✅ | ✅ | ✅ | ✅ | ❌ | 🟡 P1 |
 | 多语言 | ✅ | ✅ | ✅ | ✅ | ❌ | 🟢 P2 |
 | 移动端适配 | ✅ | ✅ | ❌ | ✅ | ❌ | 🟢 P2 |
-| 拖拽外部文件到画布 | ✅ | ✅ | ❌ | ✅ | ❌ | 🟡 P1 |
+| 拖拽外部文件到画布 | ✅ | ✅ | ❌ | ✅ | ⚠️ 支持粘贴图片，拖拽待实现 | 🟡 P1 |
 | 块内嵌套内容 | ✅ | ✅ | ❌ | ❌ | ❌ | 🟢 P2 |
 
 ## 三、建议开发路线图
 
 ### Phase 1 — 基础体验补全（P0）
-1. **撤销/重做**：命令模式 + 操作栈，Ctrl+Z / Ctrl+Y
-2. **复制/粘贴**：Ctrl+C 序列化选中块，Ctrl+V 在鼠标位置粘贴
-3. **缩放**：Ctrl+滚轮缩放画布，transform: scale() + 坐标换算
-4. **全文搜索**：遍历所有笔记的 blocks.content，高亮匹配结果
-5. **完善快捷键**：Ctrl+A 全选、Ctrl+D 复制、方向键微调位置
+1. ~~**直接粘贴文本/图片到画布**~~ ✅ 已完成（2026-09-09）
+2. ~~**自定义确认/提示对话框**~~ ✅ 已完成（2026-09-09）
+3. ~~**撤销/重做**~~ ✅ 已完成（2026-09-09）：undoStack/redoStack + Ctrl+Z/Y
+4. **块复制/粘贴**：Ctrl+C 序列化选中块，Ctrl+V 在鼠标位置粘贴
+5. **缩放**：Ctrl+滚轮缩放画布，transform: scale() + 坐标换算
+6. **全文搜索**：遍历所有笔记的 blocks.content，高亮匹配结果
+7. **完善快捷键**：Ctrl+A 全选、Ctrl+D 复制、方向键微调位置
 
 ### Phase 2 — 生产力增强（P1）
 6. **网格吸附 + 智能参考线**：拖拽时显示对齐辅助线
@@ -120,14 +124,38 @@
 
 ## 四、技术债务 & 已知问题
 
+### 4.1 架构层面
+
+| 问题 | 状态 | 说明 |
+|------|------|------|
+| ~~无操作历史栈~~ | ✅ 已修复 | undoStack/redoStack + pushUndo/undo/redo 已实现 |
+| ~~坐标计算依赖 getBoundingClientRect~~ | ✅ 已修复 | screenToCanvas 工具函数已抽取 |
+| ~~块 z-index 仅递增~~ | ✅ 已修复 | zIndexCounter 超阈值时自动重排归一化 |
+| contenteditable 与 v-html 冲突 | ⚠️ 仍存在 | 需自定义指令绕过 Vue 响应式；中期迁移到 TipTap/ProseMirror |
+| 存储为单 JSON 文件 | ⚠️ 仍存在 | 大笔记读写慢；建议拆分为 per-note 文件或迁移到 Tauri SQLite |
+
+### 4.2 代码质量
+
+| 问题 | 状态 | 说明 |
+|------|------|------|
+| ~~JSON.parse(JSON.stringify) 深拷贝~~ | ✅ 已修复 | 全部替换为 structuredClone |
+| ~~BlockData 加载无校验~~ | ✅ 已修复 | loadNote 中增加字段类型校验与默认值兜底 |
+| ~~save 逻辑重复~~ | ✅ 已修复 | 保存逻辑已去重统一到 storage service |
+| ~~console.log 残留~~ | ✅ 已修复 | canvas.ts、nav.ts 调试日志已全部移除 |
+| Canvas.vue 超过 1500 行 | ⚠️ 仍存在 | 建议拆分为 useCanvasDrag、useCanvasSelection、useCanvasPaste 等 composables |
+| ~~stripInlineFormatting 重复~~ | ✅ 已修复 | 已抽取到 utils/text-format.ts，TextFormatBar 改为导入 |
+| ~~execCommand 已废弃~~ | ✅ 已修复 | 所有 execCommand 调用已封装到 utils/text-format.ts formatAdapter，组件层无直接调用 |
+| ~~内联样式直接操作 DOM~~ | ✅ 已确认 | 审计确认所有样式变更均通过 canvas.updateBlock() 响应式驱动，无直接 DOM style 写入 |
+| 缺少单元测试 | ⚠️ 仍存在 | 建议补充 vitest + @vue/test-utils 核心逻辑测试 |
+
+### 4.3 用户体验
+
 | 问题 | 影响 | 建议 |
 |------|------|------|
-| contenteditable 与 v-html 冲突 | 需自定义指令绕过 Vue 响应式 | 考虑迁移到 ProseMirror/TipTap |
-| 无操作历史栈 | 误操作无法撤回 | 实现 Command Pattern + Undo Stack |
-| 坐标计算依赖 getBoundingClientRect | 缩放后需重新换算 | 引入统一的屏幕↔画布坐标转换函数 |
-| 块 z-index 仅递增 | 长期使用后数值膨胀 | 定期重排或使用浮点 z-index |
-| 无性能优化 | 大量块时渲染卡顿 | 虚拟滚动 / Web Worker / Canvas 渲染 |
-| 存储为单 JSON 文件 | 大文件读写慢 | 拆分为 per-note 文件或 SQLite |
+| 编辑模式与选中模式状态切换复杂 | 格式操作容易在错误状态下执行 | 明确状态机：idle → selected → editing，每个状态限定可用操作 |
+| 无操作反馈（toast/动画） | 用户不确定操作是否生效 | 统一 toast 系统 + 关键操作微动画 |
+| 粘贴内容无预览确认 | 大图片粘贴后才发现尺寸不合适 | 粘贴前显示缩略图预览 + 尺寸选择 |
+| 无键盘导航 | 纯鼠标操作效率低 | Tab 切换块、方向键微调、Enter 进入编辑 |
 
 ## 五、竞品亮点参考
 

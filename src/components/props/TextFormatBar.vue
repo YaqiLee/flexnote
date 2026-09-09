@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useCanvasStore } from '../../stores/canvas'
+import {
+  stripInlineFormatting,
+  execBold,
+  execItalic,
+  execUnderline,
+  execStrikeThrough,
+  execForeColor,
+  execFontName,
+  execFontSize,
+} from '../../utils/text-format'
 
 const canvas = useCanvasStore()
 
@@ -121,39 +131,6 @@ function restoreSelection(): boolean {
   return false
 }
 
-// Strip inline formatting tags so block-level CSS can apply uniformly
-function stripInlineFormatting(blockId: string) {
-  const el = document.querySelector(`[data-block-id="${blockId}"] .block-text`) as HTMLElement
-  if (!el) return
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT)
-  const toUnwrap: Element[] = []
-  let node: Node | null = walker.currentNode
-  while (node) {
-    if (node.nodeType === Node.ELEMENT_NODE) {
-      const tag = (node as Element).tagName.toLowerCase()
-      if (['b', 'i', 'u', 's', 'strike', 'del', 'strong', 'em', 'font', 'span'].includes(tag)) {
-        toUnwrap.push(node as Element)
-      }
-    }
-    node = walker.nextNode()
-  }
-  for (const elem of toUnwrap) {
-    const parent = elem.parentNode
-    if (parent) {
-      while (elem.firstChild) {
-        parent.insertBefore(elem.firstChild, elem)
-      }
-      parent.removeChild(elem)
-    }
-  }
-  el.querySelectorAll('*').forEach(child => {
-    child.removeAttribute('style')
-    child.removeAttribute('color')
-    child.removeAttribute('face')
-    child.removeAttribute('size')
-  })
-}
-
 function applyBlockStyle(updates: Record<string, any>) {
   if (!canvas.selectedBlockId) return
   stripInlineFormatting(canvas.selectedBlockId)
@@ -165,7 +142,7 @@ function toggleBold() {
     restoreSelection()
   }
   if (canvas.editingBlockId && hasTextSelection()) {
-    document.execCommand('bold', false)
+    execBold()
   } else if (canvas.selectedBlockId) {
     const block = canvas.selectedBlock
     const current = block?.fontWeight === 'bold'
@@ -179,7 +156,7 @@ function toggleItalic() {
     restoreSelection()
   }
   if (canvas.editingBlockId && hasTextSelection()) {
-    document.execCommand('italic', false)
+    execItalic()
   } else if (canvas.selectedBlockId) {
     const block = canvas.selectedBlock
     const current = block?.fontStyle === 'italic'
@@ -193,7 +170,7 @@ function toggleUnderline() {
     restoreSelection()
   }
   if (canvas.editingBlockId && hasTextSelection()) {
-    document.execCommand('underline', false)
+    execUnderline()
   } else if (canvas.selectedBlockId) {
     const block = canvas.selectedBlock
     const hasUnder = block?.textDecoration?.includes('underline')
@@ -215,7 +192,7 @@ function toggleStrikeThrough() {
     restoreSelection()
   }
   if (canvas.editingBlockId && hasTextSelection()) {
-    document.execCommand('strikeThrough', false)
+    execStrikeThrough()
   } else if (canvas.selectedBlockId) {
     const block = canvas.selectedBlock
     const hasUnder = block?.textDecoration?.includes('underline')
@@ -236,15 +213,7 @@ function setFontSize(val: string) {
     restoreSelection()
   }
   if (canvas.editingBlockId && hasTextSelection()) {
-    const sel = window.getSelection()!
-    const range = sel.getRangeAt(0)
-    const span = document.createElement('span')
-    span.style.fontSize = val + 'px'
-    try {
-      range.surroundContents(span)
-    } catch {
-      document.execCommand('fontSize', false, '4')
-    }
+    execFontSize(Number(val))
   } else if (canvas.selectedBlockId) {
     applyBlockStyle({ fontSize: Number(val) })
   }
@@ -256,7 +225,7 @@ function setFontColor(val: string) {
     restoreSelection()
   }
   if (canvas.editingBlockId && hasTextSelection()) {
-    document.execCommand('foreColor', false, val)
+    execForeColor(val)
   } else if (canvas.selectedBlockId) {
     applyBlockStyle({ fontColor: val })
   }
@@ -268,7 +237,7 @@ function setFontFamily(val: string) {
     restoreSelection()
   }
   if (canvas.editingBlockId && hasTextSelection()) {
-    document.execCommand('fontName', false, val || 'sans-serif')
+    execFontName(val)
   } else if (canvas.selectedBlockId) {
     applyBlockStyle({ fontFamily: val || undefined })
   }

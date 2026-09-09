@@ -18,6 +18,11 @@ function clientToCanvas(clientX: number, clientY: number): { x: number; y: numbe
   return { x: clientX - rect.left, y: clientY - rect.top }
 }
 
+function clearTextSelection() {
+  const sel = window.getSelection()
+  if (sel) sel.removeAllRanges()
+}
+
 // Dynamic canvas size
 const canvasWidth = ref(3000)
 const canvasHeight = ref(2000)
@@ -110,6 +115,9 @@ let marqueeStartX = 0
 let marqueeStartY = 0
 let marqueeDidSelect = false
 const marqueeRect = ref({ left: 0, top: 0, width: 0, height: 0, visible: false })
+const pasteNotice = ref('')
+let pasteNoticeTimer: ReturnType<typeof setTimeout> | null = null
+const MAX_PASTE_IMAGE_BYTES = 10 * 1024 * 1024
 
 function onCanvasMouseDown(e: MouseEvent) {
   const target = e.target as HTMLElement
@@ -117,6 +125,16 @@ function onCanvasMouseDown(e: MouseEvent) {
     target.classList.contains('canvas-hint') ||
     target.classList.contains('canvas-wrap')
   if (!isCanvasArea) return
+
+  // Clear editing state and text selection immediately on mousedown
+  // to prevent contenteditable from restoring selection on mouseup
+  if (e.button === 0 && !spaceHeld && !canvas.currentTool) {
+    if (canvas.editingBlockId) {
+      canvas.setEditing(null)
+    }
+    canvas.selectBlock(null)
+    clearTextSelection()
+  }
 
   // Middle mouse or Space+click for panning
   if (e.button === 1 || spaceHeld) {
@@ -138,6 +156,122 @@ function onCanvasMouseDown(e: MouseEvent) {
   }
 }
 
+function showPasteNotice(message: string) {
+  pasteNotice.value = message
+  if (pasteNoticeTimer) clearTimeout(pasteNoticeTimer)
+  pasteNoticeTimer = setTimeout(() => {
+    pasteNotice.value = ''
+    pasteNoticeTimer = null
+  }, 2800)
+}
+
+function getPasteOrigin() {
+  const wrap = canvasEl.value?.parentElement
+  return {
+    x: (wrap?.scrollLeft || 0) + (wrap?.clientWidth || 800) / 2 - 200,
+    y: (wrap?.scrollTop || 0) + (wrap?.clientHeight || 600) / 2 - 100,
+  }
+}
+
+function readImageFile(file: File): Promise<{ src: string; width: number; height: number } | null> {
+  return new Promise(resolve => {
+    if (file.size > MAX_PASTE_IMAGE_BYTES) {
+      resolve(null)
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      const src = typeof reader.result === 'string' ? reader.result : ''
+      if (!src) {
+        resolve(null)
+        return
+      }
+      const image = new Image()
+      image.onload = () => {
+        const scale = Math.min(1, 400 / image.naturalWidth, 300 / image.naturalHeight)
+        resolve({
+          src,
+          width: Math.max(1, Math.round(image.naturalWidth * scale)),
+          height: Math.max(1, Math.round(image.naturalHeight * scale)),
+        })
+      }
+      image.onerror = () => resolve(null)
+      image.src = src
+    }
+    reader.onerror = () => resolve(null)
+    reader.readAsDataURL(file)
+  })
+}
+
+async function onCanvasPaste(e: ClipboardEvent) {
+  const activeEl = document.activeElement as HTMLElement | null
+  if (activeEl?.isContentEditable) return
+  if (activeEl && activeEl !== document.body && !activeEl.closest('.canvas-wrap')) return
+
+  const data = e.clipboardData
+  if (!data) return
+  const text = data.getData('text/plain').trim()
+  const imageFiles = Array.from(data.files).filter(file => file.type.startsWith('image/'))
+  if (!text && imageFiles.length === 0) {
+    showPasteNotice('剪贴板中没有可插入的文本或图片')
+    return
+  }
+
+  e.preventDefault()
+  const origin = getPasteOrigin()
+  const newIds: string[] = []
+  let y = origin.y
+
+  if (text) {
+    const id = canvas.addBlock({
+      type: 'text',
+      x: origin.x,
+      y,
+      width: 400,
+      content: text.replace(/\r\n/g, '\n'),
+      borderRadius: 0,
+      fontSize: 14,
+      fontColor: '#333333',
+    })
+    newIds.push(id)
+    y += Math.max(90, Math.min(300, text.split('\n').length * 28 + 40))
+  }
+
+  let skippedImages = 0
+  for (const file of imageFiles) {
+    const image = await readImageFile(file)
+    if (!image) {
+      skippedImages++
+      continue
+    }
+    const id = canvas.addBlock({
+      type: 'image',
+      x: origin.x,
+      y,
+      width: image.width,
+      height: image.height,
+      src: image.src,
+      borderRadius: 0,
+    })
+    newIds.push(id)
+    y += image.height + 24
+  }
+
+  if (newIds.length > 0) {
+    canvas.selectBlocks(newIds)
+    expandCanvasIfNeeded()
+    if (text && newIds.length === 1) {
+      canvas.setEditing(newIds[0])
+      await nextTick()
+      const textEl = document.querySelector<HTMLElement>(`[data-block-id="${newIds[0]}"] .block-text`)
+      textEl?.focus()
+    }
+  }
+  if (skippedImages > 0) {
+    showPasteNotice('部分图片超过 10MB 或格式无法读取，未能插入')
+  }
+}
+
 function handleCanvasClick(e: MouseEvent) {
   // Skip if this was a marquee selection or pan operation
   if (marqueeDidSelect) {
@@ -156,6 +290,7 @@ function handleCanvasClick(e: MouseEvent) {
     const activeEl = document.activeElement as HTMLElement | null
     if (activeEl && activeEl !== document.body) activeEl.blur()
     canvas.selectBlock(null)
+    clearTextSelection()
     return
   }
 
@@ -206,10 +341,7 @@ function onTextBlur(blockId: string, e: FocusEvent) {
     }
     if (canvas.editingBlockId === blockId) {
       canvas.setEditing(null)
-      const sel = window.getSelection()
-      if (sel) {
-        sel.removeAllRanges()
-      }
+      clearTextSelection()
     }
   }, 150)
 }
@@ -436,6 +568,7 @@ function onKeyDown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     if (isEditing) {
       activeEl?.blur()
+      clearTextSelection()
     } else {
       canvas.setTool(null)
       canvas.selectBlock(null)
@@ -568,6 +701,7 @@ onMounted(() => {
   window.addEventListener('mouseup', onMouseUp)
   window.addEventListener('keydown', onKeyDown)
   window.addEventListener('keyup', onKeyUp)
+  window.addEventListener('paste', onCanvasPaste)
   expandCanvasIfNeeded()
 })
 
@@ -576,6 +710,8 @@ onUnmounted(() => {
   window.removeEventListener('mouseup', onMouseUp)
   window.removeEventListener('keydown', onKeyDown)
   window.removeEventListener('keyup', onKeyUp)
+  window.removeEventListener('paste', onCanvasPaste)
+  if (pasteNoticeTimer) clearTimeout(pasteNoticeTimer)
 })
 </script>
 
@@ -666,6 +802,7 @@ onUnmounted(() => {
         选择顶部工具，点击画布放置组件
         <small>点击文本编辑 · 拖拽 ⠿ 手柄移动 · Alt+拖拽平移画布 · 框选多个块</small>
       </div>
+      <div v-if="pasteNotice" class="paste-notice" role="status">{{ pasteNotice }}</div>
 
       <!-- Marquee selection rectangle -->
       <div
@@ -850,6 +987,23 @@ onUnmounted(() => {
   text-align: center;
 }
 .canvas-hint small { font-size: 12px; color: #d5d5d5; display: block; margin-top: 8px; }
+
+.paste-notice {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  z-index: 200;
+  max-width: 360px;
+  padding: 9px 14px;
+  transform: translateX(-50%);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 6px 20px rgba(32, 33, 36, 0.14);
+  font-size: 12px;
+  text-align: center;
+}
 
 .marquee-rect {
   position: absolute;

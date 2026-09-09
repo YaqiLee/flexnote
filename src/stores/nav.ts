@@ -27,12 +27,8 @@ export const useNavStore = defineStore('nav', () => {
   }
 
   function setActiveNote(id: string) {
-    const oldId = activeNoteId.value
-    console.log('[NavStore] setActiveNote:', id, 'prev:', oldId)
-    if (id === oldId) return
-
+    if (id === activeNoteId.value) return
     activeNoteId.value = id
-    console.log('[NavStore] after set, activeNoteId.value =', activeNoteId.value)
   }
 
   function toggleStar(noteId: string) {

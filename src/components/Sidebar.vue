@@ -103,7 +103,20 @@ async function handleDeleteGroup() {
   const group = nav.groups.find(g => g.id === ctxMenu.value.targetId)
   if (!group) return
   if (await openConfirm('删除分组', `确定删除分组「${group.name}」及其所有笔记？`, true)) {
+    // Collect note ids before the group is removed from the tree
+    const noteIds: string[] = []
+    const collectIds = (items: typeof group.items) => {
+      for (const item of items) {
+        noteIds.push(item.id)
+        if (item.children) collectIds(item.children)
+      }
+    }
+    collectIds(group.items)
+
     nav.deleteGroup(ctxMenu.value.targetId)
+    for (const id of noteIds) {
+      await canvas.deleteNoteData(id)
+    }
     canvas.saveNavData()
   }
 }
@@ -141,7 +154,9 @@ async function handleDeleteNote() {
   const title = nav.getNoteTitle(ctxMenu.value.targetId)
   if (!title) return
   if (await openConfirm('删除笔记', `确定删除笔记「${title}」？`, true)) {
-    nav.deleteNote(ctxMenu.value.targetId)
+    const targetId = ctxMenu.value.targetId
+    nav.deleteNote(targetId)
+    await canvas.deleteNoteData(targetId)
     canvas.saveNavData()
   }
 }

@@ -236,9 +236,14 @@ async function onCanvasPaste(e: ClipboardEvent) {
   if (activeEl && activeEl !== document.body && !activeEl.closest('.canvas-wrap')) return
 
   const data = e.clipboardData
+  const text = data?.getData('text/plain').trim() ?? ''
+  const imageFiles = data ? Array.from(data.files).filter(file => file.type.startsWith('image/')) : []
+
+  // Reaching this handler means the OS clipboard produced a paste with real
+  // content, so any internal copy is superseded by the external clipboard.
+  internalClipboardActive = false
+
   if (!data) return
-  const text = data.getData('text/plain').trim()
-  const imageFiles = Array.from(data.files).filter(file => file.type.startsWith('image/'))
   if (!text && imageFiles.length === 0) {
     showPasteNotice('剪贴板中没有可插入的文本或图片')
     return
@@ -334,7 +339,7 @@ function handleCanvasClick(e: MouseEvent) {
       if (el) el.focus()
     })
   } else if (canvas.currentTool === 'image' && canvas.pendingImageData) {
-    canvas.addBlock({ type: 'image', x, y, src: canvas.pendingImageData, borderRadius: 0 })
+    canvas.addBlock({ type: 'image', x, y, src: canvas.pendingImageData.src, width: canvas.pendingImageData.width, height: canvas.pendingImageData.height, borderRadius: 0 })
     canvas.setPendingImage(null)
     canvas.setTool(null)
     expandCanvasIfNeeded()
@@ -576,8 +581,31 @@ function onMouseUp() {
   resizeBlockId = null
 }
 
-// Clipboard for copy/paste
+// Internal clipboard for copy/paste. Ctrl+C fills `clipboardBlocks` and does
+// not touch the OS clipboard. `internalClipboardActive` stays true across
+// repeated Ctrl+V so the copied blocks keep pasting; it is cleared whenever the
+// OS clipboard changes (an external copy/screenshot), at which point the
+// `paste` event takes over again for external text/images.
 let clipboardBlocks: import('../stores/canvas').BlockData[] = []
+let internalClipboardActive = false
+
+function pasteInternalBlocks() {
+  const offset = 20
+  const newIds: string[] = []
+  for (const src of clipboardBlocks) {
+    const { id: _id, zIndex: _z, ...rest } = src
+    const nid = canvas.addBlock({
+      ...rest,
+      x: src.x + offset,
+      y: src.y + offset,
+    })
+    newIds.push(nid)
+  }
+  if (newIds.length > 0) {
+    canvas.selectBlocks(newIds)
+    expandCanvasIfNeeded()
+  }
+}
 
 function onKeyDown(e: KeyboardEvent) {
   const activeEl = document.activeElement as HTMLElement | null
@@ -626,37 +654,28 @@ function onKeyDown(e: KeyboardEvent) {
     return
   }
 
-  // Ctrl+C: Copy selected blocks
+  // Ctrl+C: copy selected blocks into the internal clipboard. Nothing is
+  // written to the OS clipboard, so Ctrl+V must not rely on the `paste` event
+  // for our own blocks - see the Ctrl+V branch below.
   if (ctrl && e.code === 'KeyC') {
     if (canvas.selectedBlockIds.length > 0) {
-      e.preventDefault()
-      e.stopImmediatePropagation()
       const rawBlocks = toRaw(canvas.blocks)
-      clipboardBlocks = JSON.parse(JSON.stringify(
-        rawBlocks.filter(b => canvas.selectedBlockIds.includes(b.id))
-      ))
+      const selected = rawBlocks.filter(b => canvas.selectedBlockIds.includes(b.id))
+      clipboardBlocks = JSON.parse(JSON.stringify(selected))
+      internalClipboardActive = true
     }
     return
   }
 
-  // Ctrl+V: Paste copied blocks (offset by 20px)
+  // Ctrl+V: when blocks were copied inside the app, the OS clipboard still
+  // holds whatever was there before (e.g. a screenshot), so the `paste` event
+  // would insert that instead. Keep pasting our blocks on every Ctrl+V until an
+  // external copy happens; otherwise let the `paste` event handle text/images.
   if (ctrl && e.code === 'KeyV') {
-    if (clipboardBlocks.length > 0) {
+    if (internalClipboardActive && clipboardBlocks.length > 0) {
       e.preventDefault()
       e.stopImmediatePropagation()
-      const offset = 20
-      const newIds: string[] = []
-      for (const src of clipboardBlocks) {
-        const { id: _id, zIndex: _z, ...rest } = src
-        const nid = canvas.addBlock({
-          ...rest,
-          x: src.x + offset,
-          y: src.y + offset,
-        })
-        newIds.push(nid)
-      }
-      canvas.selectBlocks(newIds)
-      expandCanvasIfNeeded()
+      pasteInternalBlocks()
     }
     return
   }

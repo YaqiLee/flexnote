@@ -1,7 +1,9 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch, nextTick, toRaw } from 'vue'
-import { saveAppData, loadAppData, createDefaultData } from '../services/storage'
+import { saveAppData, loadAppData, createDefaultData, mutateAppData, type NoteData } from '../services/storage'
 import { useNavStore } from './nav'
+
+type NoteEntry = NoteData
 
 export interface BlockData {
   id: string
@@ -32,7 +34,7 @@ export const useCanvasStore = defineStore('canvas', () => {
   const selectedBlockIds = ref<string[]>([])
   const editingBlockId = ref<string | null>(null)
   const currentTool = ref<'text' | 'image' | 'label' | 'formula' | null>(null)
-  const pendingImageData = ref<string | null>(null)
+  const pendingImageData = ref<{ src: string; width: number; height: number } | null>(null)
   const isLoaded = ref(false)
   let zIndexCounter = 0
   let saveTimer: ReturnType<typeof setTimeout> | null = null
@@ -272,7 +274,7 @@ export const useCanvasStore = defineStore('canvas', () => {
     currentTool.value = tool
   }
 
-  function setPendingImage(data: string | null) {
+  function setPendingImage(data: { src: string; width: number; height: number } | null) {
     pendingImageData.value = data
   }
 
@@ -304,52 +306,70 @@ export const useCanvasStore = defineStore('canvas', () => {
     nextTick(() => { suppressSave = false })
   }
 
+  // Tracks which note the in-memory `blocks` currently belong to, so a
+  // pending save can never be attributed to the wrong note.
+  let loadedNoteId: string | null = null
+
+  function buildNoteEntry(noteId: string, nav: ReturnType<typeof useNavStore>): NoteEntry {
+    return {
+      id: noteId,
+      title: nav.getNoteTitle(noteId) || '未命名笔记',
+      starred: nav.isNoteStarred(noteId),
+      blocks: JSON.parse(JSON.stringify(toRaw(blocks.value))),
+      updatedAt: Date.now(),
+    }
+  }
+
+  /**
+   * Persists the currently loaded note. The target note id is resolved when the
+   * write actually runs, and the pending save is dropped if the user has since
+   * switched notes (the switch itself saves the previous note).
+   */
   function scheduleSave() {
     if (!isLoaded.value || suppressSave) return
     if (saveTimer) clearTimeout(saveTimer)
-    const nav = useNavStore()
-    const noteId = nav.activeNoteId
-    if (!noteId) return
-    const snapshot = JSON.parse(JSON.stringify(toRaw(blocks.value)))
-    saveTimer = setTimeout(async () => {
-      try {
-        const data = await loadAppData()
-        if (!data) return
-        const now = Date.now()
-        data.notes[noteId] = {
-          id: noteId,
-          title: nav.getNoteTitle(noteId) || '未命名笔记',
-          starred: nav.isNoteStarred(noteId),
-          blocks: snapshot,
-          updatedAt: now,
-        }
+    saveTimer = setTimeout(() => {
+      saveTimer = null
+      const nav = useNavStore()
+      const noteId = loadedNoteId
+      if (!noteId) return
+      mutateAppData(data => {
+        if (loadedNoteId !== noteId) return false
+        data.notes[noteId] = buildNoteEntry(noteId, nav)
         data.groups = JSON.parse(JSON.stringify(toRaw(nav.groups)))
         data.activeNoteId = noteId
-        await saveAppData(data)
-        // Sync timestamp to nav store for UI display
-        nav.updateNoteTimestamp(noteId, now)
-      } catch (e) {
-        console.error('Failed to save note:', noteId, e)
-      }
+        nav.updateNoteTimestamp(noteId, data.notes[noteId].updatedAt)
+      }).catch(e => console.error('[CanvasStore] Failed to save note:', noteId, e))
     }, 500)
+  }
+
+  /** Flushes any pending debounced save immediately (used before switching notes). */
+  function flushPendingSave() {
+    if (saveTimer) {
+      clearTimeout(saveTimer)
+      saveTimer = null
+    }
   }
 
   async function saveNoteById(noteId: string) {
     if (!noteId) return
     const nav = useNavStore()
+    flushPendingSave()
+    // Only persist block content if `blocks` still belongs to this note
+    const blocksBelongToNote = loadedNoteId === noteId
     try {
-      const data = await loadAppData()
-      if (!data) return
-      data.notes[noteId] = {
-        id: noteId,
-        title: nav.getNoteTitle(noteId) || '未命名笔记',
-        starred: nav.isNoteStarred(noteId),
-        blocks: JSON.parse(JSON.stringify(toRaw(blocks.value))),
-        updatedAt: Date.now(),
-      }
-      data.groups = JSON.parse(JSON.stringify(toRaw(nav.groups)))
-      data.activeNoteId = noteId
-      await saveAppData(data)
+      const data = await mutateAppData(draft => {
+        if (blocksBelongToNote) {
+          draft.notes[noteId] = buildNoteEntry(noteId, nav)
+        } else if (draft.notes[noteId]) {
+          draft.notes[noteId].title = nav.getNoteTitle(noteId) || '未命名笔记'
+          draft.notes[noteId].starred = nav.isNoteStarred(noteId)
+        }
+        draft.groups = JSON.parse(JSON.stringify(toRaw(nav.groups)))
+        draft.activeNoteId = noteId
+      })
+      const updatedAt = data?.notes[noteId]?.updatedAt
+      if (updatedAt) nav.updateNoteTimestamp(noteId, updatedAt)
     } catch (e) {
       console.error('Failed to save note:', noteId, e)
     }
@@ -358,11 +378,10 @@ export const useCanvasStore = defineStore('canvas', () => {
   async function saveActiveNoteId(noteId: string) {
     if (!noteId) return
     try {
-      const data = await loadAppData()
-      if (!data) return
-      data.activeNoteId = noteId
-      data.groups = JSON.parse(JSON.stringify(toRaw(useNavStore().groups)))
-      await saveAppData(data)
+      await mutateAppData(data => {
+        data.activeNoteId = noteId
+        data.groups = JSON.parse(JSON.stringify(toRaw(useNavStore().groups)))
+      })
     } catch (e) {
       console.warn('[CanvasStore] saveActiveNoteId failed:', e)
     }
@@ -371,14 +390,19 @@ export const useCanvasStore = defineStore('canvas', () => {
   async function loadNote(noteId: string) {
     try {
       const data = await loadAppData()
-      if (!data || !data.notes[noteId]) {
+      if (!data) {
+        // Storage unreadable - keep current content rather than blanking the canvas
+        return
+      }
+      if (!data.notes[noteId]) {
+        loadedNoteId = noteId
         loadBlocks([])
         return
       }
+      loadedNoteId = noteId
       loadBlocks(data.notes[noteId].blocks)
     } catch (e) {
-      // loadNote failed, loading empty
-      loadBlocks([])
+      console.error('[CanvasStore] loadNote failed:', noteId, e)
     }
   }
 
@@ -387,20 +411,26 @@ export const useCanvasStore = defineStore('canvas', () => {
     try {
       data = await loadAppData()
     } catch (e) {
-      // loadAppData failed, will use defaults
+      console.error('[CanvasStore] initFromStorage load failed:', e)
     }
+    const hasPersistedData = !!data
     if (!data) {
       data = createDefaultData()
     }
     const nav = useNavStore()
     nav.loadFromData(data)
+    loadedNoteId = data.activeNoteId
     if (data.activeNoteId && data.notes[data.activeNoteId]) {
       loadBlocks(data.notes[data.activeNoteId].blocks)
     }
-    try {
-      await saveAppData(data)
-    } catch (e) {
-      // saveAppData skipped in non-Tauri env
+    // Only persist the freshly created defaults. Re-saving loaded data here
+    // would rewrite the file with a possibly stale snapshot.
+    if (!hasPersistedData) {
+      try {
+        await saveAppData(data)
+      } catch (e) {
+        console.warn('[CanvasStore] Initial save skipped:', e)
+      }
     }
     isLoaded.value = true
   }
@@ -409,46 +439,68 @@ export const useCanvasStore = defineStore('canvas', () => {
     if (!isLoaded.value) return
     const nav = useNavStore()
     try {
-      const data = await loadAppData()
-      if (!data) return
-      data.groups = JSON.parse(JSON.stringify(toRaw(nav.groups)))
-      data.activeNoteId = nav.activeNoteId
+      await mutateAppData(data => {
+        data.groups = JSON.parse(JSON.stringify(toRaw(nav.groups)))
+        data.activeNoteId = nav.activeNoteId
 
-      // Collect all note IDs currently in the nav tree
-      const validIds = new Set<string>()
-      function collectIds(items: typeof nav.groups[number]['items']) {
-        for (const item of items) {
-          validIds.add(item.id)
-          if (item.children) collectIds(item.children)
-        }
-      }
-      for (const group of nav.groups) {
-        collectIds(group.items)
-      }
-
-      // Prune notes that no longer exist in the nav tree
-      for (const noteId of Object.keys(data.notes)) {
-        if (!validIds.has(noteId)) {
-          delete data.notes[noteId]
-        }
-      }
-
-      // Ensure all nav items have corresponding note entries
-      for (const id of validIds) {
-        if (!data.notes[id]) {
-          data.notes[id] = {
-            id,
-            title: nav.getNoteTitle(id) || '未命名笔记',
-            starred: nav.isNoteStarred(id),
-            blocks: [],
-            updatedAt: Date.now(),
+        // Collect all note IDs currently in the nav tree
+        const validIds = new Set<string>()
+        function collectIds(items: typeof nav.groups[number]['items']) {
+          for (const item of items) {
+            validIds.add(item.id)
+            if (item.children) collectIds(item.children)
           }
         }
-      }
+        for (const group of nav.groups) {
+          collectIds(group.items)
+        }
 
-      await saveAppData(data)
+        // Prune notes that no longer exist in the nav tree. The active note and
+        // the note currently loaded in the canvas are always preserved so that
+        // a transient nav state can never wipe content that is still on screen.
+        const protectedIds = new Set<string>(validIds)
+        if (nav.activeNoteId) protectedIds.add(nav.activeNoteId)
+        if (loadedNoteId) protectedIds.add(loadedNoteId)
+        for (const noteId of Object.keys(data.notes)) {
+          if (!protectedIds.has(noteId)) {
+            delete data.notes[noteId]
+          }
+        }
+
+        // Ensure all nav items have corresponding note entries
+        for (const id of validIds) {
+          if (!data.notes[id]) {
+            data.notes[id] = {
+              id,
+              title: nav.getNoteTitle(id) || '未命名笔记',
+              starred: nav.isNoteStarred(id),
+              blocks: [],
+              updatedAt: Date.now(),
+            }
+          }
+        }
+      })
     } catch (e) {
       console.error('[CanvasStore] saveNavData failed:', e)
+    }
+  }
+
+  /**
+   * Deletes a note's persisted content. Called explicitly when the user
+   * confirms deletion, so ordinary nav saves never remove note data.
+   */
+  async function deleteNoteData(noteId: string) {
+    if (!noteId) return
+    if (loadedNoteId === noteId) {
+      flushPendingSave()
+      loadedNoteId = null
+    }
+    try {
+      await mutateAppData(data => {
+        delete data.notes[noteId]
+      })
+    } catch (e) {
+      console.error('[CanvasStore] deleteNoteData failed:', noteId, e)
     }
   }
 
@@ -483,6 +535,7 @@ export const useCanvasStore = defineStore('canvas', () => {
     saveNoteById,
     saveActiveNoteId,
     saveNavData,
+    deleteNoteData,
     initFromStorage,
     undo,
     redo,

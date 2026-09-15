@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useNavStore } from '../stores/nav'
 import { useCanvasStore } from '../stores/canvas'
-import { exportData, importData, saveAppData } from '../services/storage'
+import { exportData, importData, mutateAppData } from '../services/storage'
 
 const nav = useNavStore()
 const canvas = useCanvasStore()
@@ -22,7 +22,12 @@ async function handleImport(e: Event) {
   if (!file) return
   const data = await importData(file)
   if (data) {
-    await saveAppData(data)
+    await mutateAppData(draft => {
+      draft.version = data.version
+      draft.groups = data.groups
+      draft.notes = data.notes
+      draft.activeNoteId = data.activeNoteId
+    })
     nav.loadFromData(data)
     if (data.activeNoteId && data.notes[data.activeNoteId]) {
       canvas.loadBlocks(data.notes[data.activeNoteId].blocks)

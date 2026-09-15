@@ -19,7 +19,16 @@ async function handleImageUpload(e: Event) {
   if (!file) return
   const id = crypto.randomUUID()
   await saveAsset(id, file)
-  canvas.setPendingImage(assetUrl(id))
+  const dims = await new Promise<{ w: number; h: number } | null>(resolve => {
+    const img = new Image()
+    img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight })
+    img.onerror = () => resolve(null)
+    img.src = assetUrl(id)
+  })
+  const scale = dims ? Math.min(1, 400 / dims.w, 300 / dims.h) : 1
+  const width = dims ? Math.max(1, Math.round(dims.w * scale)) : 200
+  const height = dims ? Math.max(1, Math.round(dims.h * scale)) : 80
+  canvas.setPendingImage({ src: assetUrl(id), width, height })
   canvas.setTool('image')
   input.value = ''
 }

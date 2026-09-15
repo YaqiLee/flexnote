@@ -425,6 +425,37 @@ function onTextMouseDown(e: MouseEvent, blockId: string) {
   canvas.setEditing(blockId)
 }
 
+function onFormulaFocus(blockId: string) {
+  canvas.setEditing(blockId)
+}
+
+function onFormulaBlur(blockId: string, e: FocusEvent) {
+  const el = e.target as HTMLElement
+  canvas.updateBlock(blockId, { formula: el.textContent || '' })
+  if (canvas.editingBlockId === blockId) {
+    canvas.setEditing(null)
+  }
+}
+
+function onFormulaMouseDown(e: MouseEvent, blockId: string) {
+  if (e.shiftKey) {
+    const ids = [...canvas.selectedBlockIds]
+    const idx = ids.indexOf(blockId)
+    if (idx >= 0) {
+      ids.splice(idx, 1)
+    } else {
+      ids.push(blockId)
+    }
+    canvas.selectBlocks(ids)
+    e.preventDefault()
+    return
+  }
+  if (!canvas.selectedBlockIds.includes(blockId)) {
+    canvas.selectBlock(blockId)
+  }
+  canvas.setEditing(blockId)
+}
+
 function onBlockMouseDown(e: MouseEvent, blockId: string) {
   const target = e.target as HTMLElement
   if (target.classList.contains('rh')) return
@@ -432,6 +463,9 @@ function onBlockMouseDown(e: MouseEvent, blockId: string) {
 
   const isTextBlock = target.classList.contains('block-text')
   if (isTextBlock) return
+
+  const isFormulaBlock = target.classList.contains('block-formula')
+  if (isFormulaBlock) return
 
   // Shift+click toggles individual block selection
   if (e.shiftKey) {
@@ -844,12 +878,13 @@ onUnmounted(() => {
         <div
           v-else-if="block.type === 'formula'"
           class="block-formula"
-          contenteditable="true"
-          @focus="canvas.selectBlock(block.id)"
-          @blur="canvas.updateBlock(block.id, { formula: ($event.target as HTMLElement).textContent || '' })"
-        >
-          {{ block.formula || 'E = mc²' }}
-        </div>
+          :contenteditable="canvas.editingBlockId === block.id ? 'true' : 'false'"
+          @focus="onFormulaFocus(block.id)"
+          @blur="onFormulaBlur(block.id, $event)"
+          @mousedown.stop="onFormulaMouseDown($event, block.id)"
+          @dblclick.stop="canvas.setEditing(block.id); ($event.target as HTMLElement).focus()"
+          v-init-html="block.formula || 'E = mc²'"
+        />
 
         <template v-if="(block.type === 'text' || block.type === 'image') && canvas.selectedBlockIds.includes(block.id)">
           <div class="rh rh-n" @mousedown="startResize($event, block.id, 'n')" />

@@ -368,7 +368,7 @@ onUnmounted(() => {
               :drag-over-id="dragOverId"
               :drag-position="dragPosition"
               @select="nav.setActiveNote($event)"
-              @contextmenu="showCtxMenu($event, 'note', item.id)"
+              @contextmenu="(e: MouseEvent, id: string) => showCtxMenu(e, 'note', id)"
               @toggle-star="nav.toggleStar($event)"
               @toggle-collapsed="nav.toggleItemCollapsed($event)"
             />

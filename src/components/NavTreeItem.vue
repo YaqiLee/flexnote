@@ -12,7 +12,7 @@ defineProps<{
 
 const emit = defineEmits<{
   select: [id: string]
-  contextmenu: [e: MouseEvent]
+  contextmenu: [e: MouseEvent, id: string]
   toggleStar: [id: string]
   toggleCollapsed: [id: string]
 }>()
@@ -39,7 +39,7 @@ const emit = defineEmits<{
       }"
       :style="{ paddingLeft: (24 + depth * 16) + 'px' }"
       @click="emit('select', item.id)"
-      @contextmenu="emit('contextmenu', $event)"
+      @contextmenu="emit('contextmenu', $event, item.id)"
     >
       <span
         v-if="item.children && item.children.length > 0"
@@ -67,7 +67,7 @@ const emit = defineEmits<{
       :drag-over-id="dragOverId"
       :drag-position="dragPosition"
       @select="(id: string) => emit('select', id)"
-      @contextmenu="(e: MouseEvent) => emit('contextmenu', e)"
+      @contextmenu="(e: MouseEvent, id: string) => emit('contextmenu', e, id)"
       @toggle-star="(id: string) => emit('toggleStar', id)"
       @toggle-collapsed="(id: string) => emit('toggleCollapsed', id)"
     />

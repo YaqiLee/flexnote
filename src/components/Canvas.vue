@@ -230,18 +230,43 @@ async function readImageFile(file: File): Promise<{ src: string; width: number; 
   }
 }
 
+function extractTextFromHtml(html: string): string {
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  return doc.body.textContent || doc.body.innerText || ''
+}
+
 async function onCanvasPaste(e: ClipboardEvent) {
   const activeEl = document.activeElement as HTMLElement | null
   if (activeEl?.isContentEditable) return
   if (activeEl && activeEl !== document.body && !activeEl.closest('.canvas-wrap')) return
 
   const data = e.clipboardData
-  const text = data?.getData('text/plain').trim() ?? ''
   const imageFiles = data ? Array.from(data.files).filter(file => file.type.startsWith('image/')) : []
 
-  // Reaching this handler means the OS clipboard produced a paste with real
-  // content, so any internal copy is superseded by the external clipboard.
-  internalClipboardActive = false
+  // Prefer text/html over text/plain to avoid LaTeX source leaking through
+  // (e.g. \(\boldsymbol{...}\) from formula editors).
+  let text = ''
+  const html = data?.getData('text/html') || ''
+  if (html) {
+    text = extractTextFromHtml(html).trim()
+  }
+  if (!text) {
+    text = data?.getData('text/plain').trim() ?? ''
+  }
+
+  const hasExternalContent = imageFiles.length > 0 || text.length > 0
+
+  // If the OS clipboard has external content (images or text from screenshots
+  // or other apps), always prefer it over internal blocks. This ensures that
+  // whichever copy happened last wins.
+  if (hasExternalContent) {
+    internalClipboardActive = false
+  } else if (internalClipboardActive && clipboardBlocks.length > 0) {
+    // No external content in clipboardData → use internal blocks
+    e.preventDefault()
+    pasteInternalBlocks()
+    return
+  }
 
   if (!data) return
   if (!text && imageFiles.length === 0) {
@@ -615,11 +640,11 @@ function onMouseUp() {
   resizeBlockId = null
 }
 
-// Internal clipboard for copy/paste. Ctrl+C fills `clipboardBlocks` and does
-// not touch the OS clipboard. `internalClipboardActive` stays true across
-// repeated Ctrl+V so the copied blocks keep pasting; it is cleared whenever the
-// OS clipboard changes (an external copy/screenshot), at which point the
-// `paste` event takes over again for external text/images.
+// Internal clipboard for copy/paste. Ctrl+C stores blocks in `clipboardBlocks`.
+// On Ctrl+V, we check the paste event's clipboardData first: if it contains
+// images or text, that means the OS clipboard has external content (from a
+// screenshot or another app), so we use that. Only when clipboardData is empty
+// do we fall back to the internal blocks.
 let clipboardBlocks: import('../stores/canvas').BlockData[] = []
 let internalClipboardActive = false
 
@@ -641,7 +666,7 @@ function pasteInternalBlocks() {
   }
 }
 
-function onKeyDown(e: KeyboardEvent) {
+async function onKeyDown(e: KeyboardEvent) {
   const activeEl = document.activeElement as HTMLElement | null
   const isEditing = activeEl?.isContentEditable === true
   const ctrl = e.ctrlKey || e.metaKey
@@ -688,31 +713,27 @@ function onKeyDown(e: KeyboardEvent) {
     return
   }
 
-  // Ctrl+C: copy selected blocks into the internal clipboard. Nothing is
-  // written to the OS clipboard, so Ctrl+V must not rely on the `paste` event
-  // for our own blocks - see the Ctrl+V branch below.
+  // Ctrl+C: copy selected blocks into the internal clipboard AND clear the
+  // OS clipboard so that stale external content (e.g. a previous screenshot)
+  // doesn't interfere. On Ctrl+V, if clipboardData is empty we use internal
+  // blocks; if it has content, an external copy happened after our Ctrl+C.
   if (ctrl && e.code === 'KeyC') {
     if (canvas.selectedBlockIds.length > 0) {
       const rawBlocks = toRaw(canvas.blocks)
       const selected = rawBlocks.filter(b => canvas.selectedBlockIds.includes(b.id))
       clipboardBlocks = JSON.parse(JSON.stringify(selected))
       internalClipboardActive = true
+      // Clear OS clipboard so old external content doesn't shadow internal copy
+      try {
+        await navigator.clipboard.writeText('')
+      } catch {
+        // Clipboard write may fail silently; paste handler will still work
+      }
     }
     return
   }
 
-  // Ctrl+V: when blocks were copied inside the app, the OS clipboard still
-  // holds whatever was there before (e.g. a screenshot), so the `paste` event
-  // would insert that instead. Keep pasting our blocks on every Ctrl+V until an
-  // external copy happens; otherwise let the `paste` event handle text/images.
-  if (ctrl && e.code === 'KeyV') {
-    if (internalClipboardActive && clipboardBlocks.length > 0) {
-      e.preventDefault()
-      e.stopImmediatePropagation()
-      pasteInternalBlocks()
-    }
-    return
-  }
+  // Ctrl+V: handled by the paste event below.
 
   // Ctrl+D: Duplicate selected blocks
   if (ctrl && e.code === 'KeyD') {
@@ -745,16 +766,23 @@ function onKeyDown(e: KeyboardEvent) {
     if (canvas.selectedBlockIds.length > 0) {
       e.preventDefault()
       const idsToRemove = [...canvas.selectedBlockIds]
-      // Clean up assets for deleted image blocks
+      const removeSet = new Set(idsToRemove)
+      // Clean up assets for deleted image blocks, but only when no remaining
+      // block still references the same asset (copied/pasted images share src).
       for (const id of idsToRemove) {
         const block = canvas.blocks.find(b => b.id === id)
         if (block?.type === 'image' && block.src && isAssetRef(block.src)) {
-          const assetId = getAssetId(block.src)
-          deleteAsset(assetId).catch(() => {})
-          const cachedUrl = resolvedImageUrls.value[block.src]
-          if (cachedUrl) {
-            URL.revokeObjectURL(cachedUrl)
-            delete resolvedImageUrls.value[block.src]
+          const stillReferenced = canvas.blocks.some(
+            b => b.id !== id && !removeSet.has(b.id) && b.src === block.src
+          )
+          if (!stillReferenced) {
+            const assetId = getAssetId(block.src)
+            deleteAsset(assetId).catch(() => {})
+            const cachedUrl = resolvedImageUrls.value[block.src]
+            if (cachedUrl) {
+              URL.revokeObjectURL(cachedUrl)
+              delete resolvedImageUrls.value[block.src]
+            }
           }
         }
       }

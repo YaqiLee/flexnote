@@ -243,15 +243,15 @@ async function onCanvasPaste(e: ClipboardEvent) {
   const data = e.clipboardData
   const imageFiles = data ? Array.from(data.files).filter(file => file.type.startsWith('image/')) : []
 
-  // Prefer text/html over text/plain to avoid LaTeX source leaking through
-  // (e.g. \(\boldsymbol{...}\) from formula editors).
-  let text = ''
-  const html = data?.getData('text/html') || ''
-  if (html) {
-    text = extractTextFromHtml(html).trim()
-  }
+  // Prefer text/plain over text/html: text/plain is usually the rendered text
+  // the user sees, while text/html may contain raw LaTeX source (e.g.
+  // \(\boldsymbol{...}\)) that leaks through when extracted as text content.
+  let text = data?.getData('text/plain').trim() ?? ''
   if (!text) {
-    text = data?.getData('text/plain').trim() ?? ''
+    const html = data?.getData('text/html') || ''
+    if (html) {
+      text = extractTextFromHtml(html).trim()
+    }
   }
 
   const hasExternalContent = imageFiles.length > 0 || text.length > 0
@@ -526,8 +526,10 @@ function startResize(e: MouseEvent, blockId: string, dir: string) {
   resizeDir = dir
   resizeStartX = e.clientX
   resizeStartY = e.clientY
-  resizeStartW = block.width || 200
-  resizeStartH = block.height || 80
+  // Use actual DOM dimensions to avoid jump when store values are stale/undefined
+  const blockEl = document.querySelector(`[data-block-id="${blockId}"]`) as HTMLElement | null
+  resizeStartW = blockEl ? blockEl.offsetWidth : (block.width || 200)
+  resizeStartH = blockEl ? blockEl.offsetHeight : (block.height || 80)
   resizeStartBX = block.x
   resizeStartBY = block.y
 }

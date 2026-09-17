@@ -291,6 +291,7 @@ function setLineHeight(val: string) {
     canvas.updateBlock(canvas.selectedBlockId, { lineHeight: Number(val) })
   }
 }
+
 </script>
 
 <template>

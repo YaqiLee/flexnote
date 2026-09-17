@@ -35,6 +35,7 @@ function changeLabelType(name: string) {
     canvas.updateBlock(canvas.selectedBlockId, { labelName: name })
   }
 }
+
 </script>
 
 <template>
@@ -154,4 +155,5 @@ function changeLabelType(name: string) {
   background: #ffebee !important;
   border-color: #ef9a9a !important;
 }
+
 </style>

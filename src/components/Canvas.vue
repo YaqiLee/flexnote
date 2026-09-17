@@ -90,6 +90,8 @@ let dragStartX = 0
 let dragStartY = 0
 let dragMoved = false
 const DRAG_THRESHOLD = 4
+// Store initial block positions at drag start for absolute snap calculation
+let dragInitialPositions: Map<string, { x: number; y: number }> = new Map()
 
 // Resize state
 let isResizing = false
@@ -119,6 +121,15 @@ const marqueeRect = ref({ left: 0, top: 0, width: 0, height: 0, visible: false }
 const pasteNotice = ref('')
 let pasteNoticeTimer: ReturnType<typeof setTimeout> | null = null
 const MAX_PASTE_IMAGE_BYTES = 10 * 1024 * 1024
+
+// Grid snapping & smart guide lines
+const GRID_SIZE = 20
+const SNAP_THRESHOLD = 8
+interface GuideLine {
+  orientation: 'h' | 'v'
+  position: number
+}
+const activeGuides = ref<GuideLine[]>([])
 
 // Resolve asset:// references to displayable object URLs
 const resolvedImageUrls = ref<Record<string, string>>({})
@@ -424,6 +435,15 @@ function onDragHandleDown(e: MouseEvent, blockId: string) {
   dragStartX = e.clientX
   dragStartY = e.clientY
   dragMoved = false
+  // Record initial positions of all blocks that will move together
+  dragInitialPositions.clear()
+  const idsToMove = canvas.selectedBlockIds.includes(blockId)
+    ? canvas.selectedBlockIds
+    : [blockId]
+  for (const id of idsToMove) {
+    const b = canvas.blocks.find(bl => bl.id === id)
+    if (b) dragInitialPositions.set(id, { x: b.x, y: b.y })
+  }
 }
 
 function onTextFocus(blockId: string) {
@@ -513,6 +533,192 @@ function onBlockMouseDown(e: MouseEvent, blockId: string) {
   dragStartX = e.clientX
   dragStartY = e.clientY
   dragMoved = false
+  // Record initial positions of all blocks that will move together
+  dragInitialPositions.clear()
+  const idsToMove = canvas.selectedBlockIds.includes(blockId)
+    ? canvas.selectedBlockIds
+    : [blockId]
+  for (const id of idsToMove) {
+    const b = canvas.blocks.find(bl => bl.id === id)
+    if (b) dragInitialPositions.set(id, { x: b.x, y: b.y })
+  }
+}
+
+// Compute smart guide lines and snap position for dragging blocks.
+// Returns snapped x/y and updates activeGuides for rendering.
+function computeSnapAndGuides(
+  dragIds: string[],
+  rawX: number,
+  rawY: number,
+): { x: number; y: number } {
+  const guides: GuideLine[] = []
+  let snapX = rawX
+  let snapY = rawY
+
+  // Collect edges of all non-dragged blocks
+  const otherBlocks = canvas.blocks.filter(b => !dragIds.includes(b.id))
+  const xEdges: number[] = []
+  const yEdges: number[] = []
+  for (const b of otherBlocks) {
+    const w = b.width || 200
+    const h = b.height || 80
+    xEdges.push(b.x, b.x + w)
+    yEdges.push(b.y, b.y + h)
+  }
+  // Also include grid lines
+  // (grid snapping is applied after alignment snapping)
+
+  // Find closest horizontal alignment (top/bottom edges)
+  let bestDx = Infinity
+  let bestSnapX = rawX
+  for (const edge of xEdges) {
+    const d = Math.abs(rawX - edge)
+    if (d < bestDx) {
+      bestDx = d
+      bestSnapX = edge
+    }
+  }
+  if (bestDx <= SNAP_THRESHOLD) {
+    snapX = bestSnapX
+    guides.push({ orientation: 'v', position: bestSnapX })
+  }
+
+  // Find closest vertical alignment (left/right edges)
+  let bestDy = Infinity
+  let bestSnapY = rawY
+  for (const edge of yEdges) {
+    const d = Math.abs(rawY - edge)
+    if (d < bestDy) {
+      bestDy = d
+      bestSnapY = edge
+    }
+  }
+  if (bestDy <= SNAP_THRESHOLD) {
+    snapY = bestSnapY
+    guides.push({ orientation: 'h', position: bestSnapY })
+  }
+
+  // If no alignment snap, apply grid snap
+  if (guides.length === 0) {
+    snapX = Math.round(rawX / GRID_SIZE) * GRID_SIZE
+    snapY = Math.round(rawY / GRID_SIZE) * GRID_SIZE
+  }
+
+  activeGuides.value = guides
+  return { x: snapX, y: snapY }
+}
+
+function clearGuides() {
+  activeGuides.value = []
+}
+
+// Compute snap and guides for resizing a block.
+// Returns snapped x, y, width, height based on which edges are being resized.
+function computeResizeSnapAndGuides(
+  blockId: string,
+  rawX: number,
+  rawY: number,
+  rawW: number,
+  rawH: number,
+  dir: string,
+): { x: number; y: number; w: number; h: number } {
+  const guides: GuideLine[] = []
+  let snapX = rawX
+  let snapY = rawY
+  let snapW = rawW
+  let snapH = rawH
+
+  const otherBlocks = canvas.blocks.filter(b => b.id !== blockId)
+  const xEdges: number[] = []
+  const yEdges: number[] = []
+  for (const b of otherBlocks) {
+    const w = b.width || 200
+    const h = b.height || 80
+    xEdges.push(b.x, b.x + w)
+    yEdges.push(b.y, b.y + h)
+  }
+
+  // Snap right edge (x + w) when resizing east
+  if (dir.includes('e')) {
+    const rightEdge = rawX + rawW
+    let bestD = Infinity
+    let bestSnap = rightEdge
+    for (const edge of xEdges) {
+      const d = Math.abs(rightEdge - edge)
+      if (d < bestD) { bestD = d; bestSnap = edge }
+    }
+    if (bestD <= SNAP_THRESHOLD) {
+      snapW = Math.max(60, bestSnap - rawX)
+      guides.push({ orientation: 'v', position: bestSnap })
+    } else {
+      // Grid snap right edge
+      const gridRight = Math.round(rightEdge / GRID_SIZE) * GRID_SIZE
+      snapW = Math.max(60, gridRight - rawX)
+    }
+  }
+
+  // Snap left edge (x) when resizing west
+  if (dir.includes('w')) {
+    let bestD = Infinity
+    let bestSnap = rawX
+    for (const edge of xEdges) {
+      const d = Math.abs(rawX - edge)
+      if (d < bestD) { bestD = d; bestSnap = edge }
+    }
+    if (bestD <= SNAP_THRESHOLD) {
+      const newW = Math.max(60, (rawX + rawW) - bestSnap)
+      snapX = bestSnap
+      snapW = newW
+      guides.push({ orientation: 'v', position: bestSnap })
+    } else {
+      const gridLeft = Math.round(rawX / GRID_SIZE) * GRID_SIZE
+      const newW = Math.max(60, (rawX + rawW) - gridLeft)
+      snapX = gridLeft
+      snapW = newW
+    }
+  }
+
+  // Snap bottom edge (y + h) when resizing south
+  if (dir.includes('s')) {
+    const bottomEdge = rawY + rawH
+    let bestD = Infinity
+    let bestSnap = bottomEdge
+    for (const edge of yEdges) {
+      const d = Math.abs(bottomEdge - edge)
+      if (d < bestD) { bestD = d; bestSnap = edge }
+    }
+    if (bestD <= SNAP_THRESHOLD) {
+      snapH = Math.max(24, bestSnap - rawY)
+      guides.push({ orientation: 'h', position: bestSnap })
+    } else {
+      const gridBottom = Math.round(bottomEdge / GRID_SIZE) * GRID_SIZE
+      snapH = Math.max(24, gridBottom - rawY)
+    }
+  }
+
+  // Snap top edge (y) when resizing north
+  if (dir.includes('n')) {
+    let bestD = Infinity
+    let bestSnap = rawY
+    for (const edge of yEdges) {
+      const d = Math.abs(rawY - edge)
+      if (d < bestD) { bestD = d; bestSnap = edge }
+    }
+    if (bestD <= SNAP_THRESHOLD) {
+      const newH = Math.max(24, (rawY + rawH) - bestSnap)
+      snapY = bestSnap
+      snapH = newH
+      guides.push({ orientation: 'h', position: bestSnap })
+    } else {
+      const gridTop = Math.round(rawY / GRID_SIZE) * GRID_SIZE
+      const newH = Math.max(24, (rawY + rawH) - gridTop)
+      snapY = gridTop
+      snapH = newH
+    }
+  }
+
+  activeGuides.value = guides
+  return { x: snapX, y: snapY, w: snapW, h: snapH }
 }
 
 function startResize(e: MouseEvent, blockId: string, dir: string) {
@@ -570,14 +776,23 @@ function onMouseMove(e: MouseEvent) {
       const idsToMove = canvas.selectedBlockIds.includes(dragBlockId)
         ? canvas.selectedBlockIds
         : [dragBlockId]
-      for (const id of idsToMove) {
-        const block = canvas.blocks.find(b => b.id === id)
-        if (block) {
-          canvas.updateBlock(id, { x: block.x + dx, y: block.y + dy })
+
+      // Compute raw position of the primary dragged block
+      const primaryInit = dragInitialPositions.get(dragBlockId)
+      if (primaryInit) {
+        const rawX = primaryInit.x + dx
+        const rawY = primaryInit.y + dy
+        const snapped = computeSnapAndGuides(idsToMove, rawX, rawY)
+        const offsetX = snapped.x - primaryInit.x
+        const offsetY = snapped.y - primaryInit.y
+
+        for (const id of idsToMove) {
+          const init = dragInitialPositions.get(id)
+          if (init) {
+            canvas.updateBlock(id, { x: init.x + offsetX, y: init.y + offsetY })
+          }
         }
       }
-      dragStartX = e.clientX
-      dragStartY = e.clientY
       expandCanvasIfNeeded()
     }
   }
@@ -586,25 +801,26 @@ function onMouseMove(e: MouseEvent) {
     const dh = e.clientY - resizeStartY
     const MIN_W = 60
     const MIN_H = 24
-    let newX = resizeStartBX
-    let newY = resizeStartBY
-    let newW = resizeStartW
-    let newH = resizeStartH
+    let rawX = resizeStartBX
+    let rawY = resizeStartBY
+    let rawW = resizeStartW
+    let rawH = resizeStartH
 
-    if (resizeDir.includes('e')) newW = Math.max(MIN_W, resizeStartW + dw)
+    if (resizeDir.includes('e')) rawW = Math.max(MIN_W, resizeStartW + dw)
     if (resizeDir.includes('w')) {
       const w = Math.max(MIN_W, resizeStartW - dw)
-      newX = resizeStartBX + (resizeStartW - w)
-      newW = w
+      rawX = resizeStartBX + (resizeStartW - w)
+      rawW = w
     }
-    if (resizeDir.includes('s')) newH = Math.max(MIN_H, resizeStartH + dh)
+    if (resizeDir.includes('s')) rawH = Math.max(MIN_H, resizeStartH + dh)
     if (resizeDir.includes('n')) {
       const h = Math.max(MIN_H, resizeStartH - dh)
-      newY = resizeStartBY + (resizeStartH - h)
-      newH = h
+      rawY = resizeStartBY + (resizeStartH - h)
+      rawH = h
     }
 
-    canvas.updateBlock(resizeBlockId, { x: newX, y: newY, width: newW, height: newH })
+    const snapped = computeResizeSnapAndGuides(resizeBlockId, rawX, rawY, rawW, rawH, resizeDir)
+    canvas.updateBlock(resizeBlockId, { x: snapped.x, y: snapped.y, width: snapped.w, height: snapped.h })
     expandCanvasIfNeeded()
   }
 }
@@ -638,6 +854,8 @@ function onMouseUp() {
   isPanning = false
   isDragging = false
   dragBlockId = null
+  dragInitialPositions.clear()
+  clearGuides()
   isResizing = false
   resizeBlockId = null
 }
@@ -945,6 +1163,20 @@ onUnmounted(() => {
           height: marqueeRect.height + 'px',
         }"
       />
+
+      <!-- Smart guide lines -->
+      <template v-for="(guide, idx) in activeGuides" :key="idx">
+        <div
+          v-if="guide.orientation === 'v'"
+          class="guide-line guide-v"
+          :style="{ left: guide.position + 'px' }"
+        />
+        <div
+          v-else
+          class="guide-line guide-h"
+          :style="{ top: guide.position + 'px' }"
+        />
+      </template>
     </div>
   </div>
 </template>
@@ -1150,5 +1382,22 @@ onUnmounted(() => {
   background: rgba(26, 115, 232, 0.08);
   pointer-events: none;
   z-index: 999;
+}
+
+.guide-line {
+  position: absolute;
+  background: #ff4081;
+  pointer-events: none;
+  z-index: 998;
+}
+.guide-v {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+.guide-h {
+  left: 0;
+  right: 0;
+  height: 1px;
 }
 </style>

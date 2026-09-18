@@ -135,13 +135,21 @@ watch(() => props.editing, (val) => {
   }
 })
 
-// Sync content from parent (only when externally updated)
+// Sync content from parent without recording in undo history.
+// Prevents Ctrl+Z in one note from reverting changes made in another note.
+import { DOMParser as ProseMirrorDOMParser } from '@tiptap/pm/model'
 let isInternalUpdate = false
 watch(() => props.content, (newContent) => {
   if (!editor.value) return
   const currentHtml = editor.value.getHTML()
   if (newContent !== currentHtml && !isInternalUpdate) {
-    editor.value.commands.setContent(newContent, { emitUpdate: false })
+    const { state, view, schema } = editor.value
+    const wrapper = document.createElement('div')
+    wrapper.innerHTML = newContent
+    const slice = ProseMirrorDOMParser.fromSchema(schema).parseSlice(wrapper)
+    const tr = state.tr.replace(0, state.doc.content.size, slice)
+    tr.setMeta('addToHistory', false)
+    view.dispatch(tr)
   }
   isInternalUpdate = false
 })

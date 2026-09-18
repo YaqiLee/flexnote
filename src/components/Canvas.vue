@@ -1,15 +1,8 @@
 ﻿<script setup lang="ts">
-import { ref, watch, nextTick, onMounted, onUnmounted, toRaw, type Directive } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted, toRaw } from 'vue'
 import { useCanvasStore } from '../stores/canvas'
 import { saveAsset, loadAsset, deleteAsset, assetUrl, isAssetRef, getAssetId } from '../services/assetStore'
-
-// Directive that sets innerHTML only once on mount, avoiding v-html re-render conflicts with contenteditable
-const vInitHtml: Directive<HTMLElement, string> = {
-  mounted(el, binding) {
-    el.innerHTML = binding.value || ''
-  },
-  // Do NOT update — let the browser manage contenteditable DOM
-}
+import TipTapEditor from './TipTapEditor.vue'
 
 const canvas = useCanvasStore()
 const canvasEl = ref<HTMLDivElement>()
@@ -409,9 +402,7 @@ function handleCanvasClick(e: MouseEvent) {
 }
 
 function onTextBlur(blockId: string, e: FocusEvent) {
-  const el = e.target as HTMLElement
-  // Save content with inline formatting preserved
-  canvas.updateBlock(blockId, { content: el.innerHTML })
+  // Content is saved via TipTapEditor's update:content event
   // Delay exit to allow format bar controls to receive focus without losing editing state
   const relatedTarget = e.relatedTarget as HTMLElement | null
   if (relatedTarget && relatedTarget.closest('.text-format-bar')) {
@@ -1070,23 +1061,25 @@ onUnmounted(() => {
             title="拖动移动"
             @mousedown.stop="onDragHandleDown($event, block.id)"
           >⠿</div>
-          <div
+          <TipTapEditor
             class="block-text"
-            :contenteditable="canvas.editingBlockId === block.id ? 'true' : 'false'"
-            :style="{
-              fontSize: (block.fontSize || 14) + 'px',
-              color: block.fontColor || '#333333',
-              fontFamily: block.fontFamily || undefined,
+            :block-id="block.id"
+            :content="block.content || ''"
+            :editing="canvas.editingBlockId === block.id"
+            :block-style="{
+              fontSize: block.fontSize || 14,
+              fontColor: block.fontColor || '#333333',
+              fontFamily: block.fontFamily,
               lineHeight: block.lineHeight || 1.7,
-              fontWeight: block.fontWeight || undefined,
-              fontStyle: block.fontStyle || undefined,
-              textDecoration: block.textDecoration || undefined,
+              fontWeight: block.fontWeight,
+              fontStyle: block.fontStyle,
+              textDecoration: block.textDecoration,
             }"
+            @update:content="(html: string) => canvas.updateBlock(block.id, { content: html })"
             @focus="onTextFocus(block.id)"
             @blur="onTextBlur(block.id, $event)"
             @mousedown.stop="onTextMouseDown($event, block.id)"
-            @dblclick.stop="canvas.setEditing(block.id); ($event.target as HTMLElement).focus()"
-            v-init-html="block.content || ''"
+            @dblclick.stop="canvas.setEditing(block.id)"
           />
         </div>
 

@@ -1,17 +1,7 @@
-<script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+﻿<script setup lang="ts">
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useCanvasStore } from '../../stores/canvas'
-import {
-  stripInlineFormatting,
-  execBold,
-  execItalic,
-  execUnderline,
-  execStrikeThrough,
-  execForeColor,
-  execHiliteColor,
-  execFontName,
-  execFontSize,
-} from '../../utils/text-format'
+import { stripInlineFormatting } from '../../utils/text-format'
 
 const canvas = useCanvasStore()
 
@@ -36,10 +26,14 @@ const currentFontSize = ref(14)
 const currentFontColor = ref('#333333')
 const currentHiliteColor = ref('transparent')
 
+function getEditor() {
+  return canvas.currentEditor
+}
+
 function updateSelectionState() {
-  const sel = window.getSelection()
-  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
-    // No selection, fall back to block-level properties
+  const editor = getEditor()
+  if (!editor) {
+    // No editor, fall back to block-level properties
     const block = canvas.selectedBlock
     isBold.value = block?.fontWeight === 'bold'
     isItalic.value = block?.fontStyle === 'italic'
@@ -51,102 +45,46 @@ function updateSelectionState() {
     currentHiliteColor.value = block?.bgColor || 'transparent'
     return
   }
-  // Check computed style at selection
-  try {
-    isBold.value = document.queryCommandState('bold')
-    isItalic.value = document.queryCommandState('italic')
-    isUnderline.value = document.queryCommandState('underline')
-    isStrikeThrough.value = document.queryCommandState('strikeThrough')
-    const fontName = document.queryCommandValue('fontName')
-    currentFontFamily.value = fontName ? fontName.replace(/"/g, '') : ''
-    const fontSizeVal = document.queryCommandValue('fontSize')
-    // execCommand fontSize returns 1-7, map to actual px
-    const sizeMap: Record<string, number> = { '1': 10, '2': 13, '3': 16, '4': 18, '5': 24, '6': 32, '7': 48 }
-    currentFontSize.value = sizeMap[fontSizeVal] || 14
-    const colorVal = document.queryCommandValue('foreColor')
-    if (colorVal) {
-      // Convert rgb(r, g, b) to #rrggbb
-      const rgbMatch = colorVal.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
-      if (rgbMatch) {
-        const r = parseInt(rgbMatch[1]).toString(16).padStart(2, '0')
-        const g = parseInt(rgbMatch[2]).toString(16).padStart(2, '0')
-        const b = parseInt(rgbMatch[3]).toString(16).padStart(2, '0')
-        currentFontColor.value = `#${r}${g}${b}`
-      } else if (colorVal.startsWith('#')) {
-        currentFontColor.value = colorVal
-      }
-    }
-    const hiliteVal = document.queryCommandValue('hiliteColor')
-    if (hiliteVal) {
-      const rgbMatch = hiliteVal.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
-      if (rgbMatch) {
-        const r = parseInt(rgbMatch[1]).toString(16).padStart(2, '0')
-        const g = parseInt(rgbMatch[2]).toString(16).padStart(2, '0')
-        const b = parseInt(rgbMatch[3]).toString(16).padStart(2, '0')
-        currentHiliteColor.value = `#${r}${g}${b}`
-      } else if (hiliteVal.startsWith('#')) {
-        currentHiliteColor.value = hiliteVal
-      }
-    } else {
-      currentHiliteColor.value = 'transparent'
-    }
-  } catch {
-    // queryCommandState may throw in some contexts
-  }
+
+  // Use TipTap editor state
+  isBold.value = editor.isActive('bold')
+  isItalic.value = editor.isActive('italic')
+  isUnderline.value = editor.isActive('underline')
+  isStrikeThrough.value = editor.isActive('strike')
+
+  const fontFamily = editor.getAttributes('textStyle').fontFamily
+  currentFontFamily.value = fontFamily || ''
+
+  const fontSize = editor.getAttributes('textStyle').fontSize
+  currentFontSize.value = fontSize ? parseInt(fontSize, 10) : 14
+
+  const color = editor.getAttributes('textStyle').color
+  currentFontColor.value = color || '#333333'
+
+  const highlight = editor.getAttributes('highlight')
+  currentHiliteColor.value = highlight?.color || 'transparent'
 }
 
+// Watch for editor changes and selection updates
+watch(() => canvas.currentEditor, (editor) => {
+  if (editor) {
+    editor.on('selectionUpdate', updateSelectionState)
+    editor.on('transaction', updateSelectionState)
+    updateSelectionState()
+  }
+}, { immediate: true })
+
 onMounted(() => {
-  document.addEventListener('selectionchange', updateSelectionState)
   updateSelectionState()
 })
 
 onUnmounted(() => {
-  document.removeEventListener('selectionchange', updateSelectionState)
+  const editor = getEditor()
+  if (editor) {
+    editor.off('selectionUpdate', updateSelectionState)
+    editor.off('transaction', updateSelectionState)
+  }
 })
-
-// Check if there is an active text selection within the editing block
-function hasTextSelection(): boolean {
-  const sel = window.getSelection()
-  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return false
-  if (!canvas.editingBlockId) return false
-  const blockEl = document.querySelector(`[data-block-id="${canvas.editingBlockId}"] .block-text`)
-  if (!blockEl) return false
-  const anchor = sel.anchorNode instanceof Element ? sel.anchorNode : sel.anchorNode?.parentElement
-  const focus = sel.focusNode instanceof Element ? sel.focusNode : sel.focusNode?.parentElement
-  return Boolean(anchor && focus && blockEl.contains(anchor) && blockEl.contains(focus))
-}
-
-// Save/restore selection for color picker (which causes blur)
-let savedRange: Range | null = null
-let savedEditingBlockId: string | null = null
-
-function saveSelection() {
-  const sel = window.getSelection()
-  if (sel && sel.rangeCount > 0 && !sel.isCollapsed && canvas.editingBlockId) {
-    savedRange = sel.getRangeAt(0).cloneRange()
-    savedEditingBlockId = canvas.editingBlockId
-  } else {
-    savedRange = null
-    savedEditingBlockId = null
-  }
-}
-
-function restoreSelection(): boolean {
-  if (savedRange && savedEditingBlockId) {
-    // Re-focus the editing block first
-    const blockEl = document.querySelector(`[data-block-id="${savedEditingBlockId}"] .block-text`) as HTMLElement
-    if (blockEl) {
-      blockEl.focus()
-      const sel = window.getSelection()
-      if (sel) {
-        sel.removeAllRanges()
-        sel.addRange(savedRange)
-      }
-      return true
-    }
-  }
-  return false
-}
 
 function applyBlockStyle(updates: Record<string, any>) {
   if (!canvas.selectedBlockId) return
@@ -155,11 +93,9 @@ function applyBlockStyle(updates: Record<string, any>) {
 }
 
 function toggleBold() {
-  if (canvas.editingBlockId) {
-    restoreSelection()
-  }
-  if (canvas.editingBlockId && hasTextSelection()) {
-    execBold()
+  const editor = getEditor()
+  if (editor && canvas.editingBlockId) {
+    editor.chain().focus().toggleBold().run()
   } else if (canvas.selectedBlockId) {
     const block = canvas.selectedBlock
     const current = block?.fontWeight === 'bold'
@@ -169,11 +105,9 @@ function toggleBold() {
 }
 
 function toggleItalic() {
-  if (canvas.editingBlockId) {
-    restoreSelection()
-  }
-  if (canvas.editingBlockId && hasTextSelection()) {
-    execItalic()
+  const editor = getEditor()
+  if (editor && canvas.editingBlockId) {
+    editor.chain().focus().toggleItalic().run()
   } else if (canvas.selectedBlockId) {
     const block = canvas.selectedBlock
     const current = block?.fontStyle === 'italic'
@@ -183,11 +117,9 @@ function toggleItalic() {
 }
 
 function toggleUnderline() {
-  if (canvas.editingBlockId) {
-    restoreSelection()
-  }
-  if (canvas.editingBlockId && hasTextSelection()) {
-    execUnderline()
+  const editor = getEditor()
+  if (editor && canvas.editingBlockId) {
+    editor.chain().focus().toggleUnderline().run()
   } else if (canvas.selectedBlockId) {
     const block = canvas.selectedBlock
     const hasUnder = block?.textDecoration?.includes('underline')
@@ -204,12 +136,9 @@ function toggleUnderline() {
 }
 
 function toggleStrikeThrough() {
-  // Only restore selection if currently in editing mode
-  if (canvas.editingBlockId) {
-    restoreSelection()
-  }
-  if (canvas.editingBlockId && hasTextSelection()) {
-    execStrikeThrough()
+  const editor = getEditor()
+  if (editor && canvas.editingBlockId) {
+    editor.chain().focus().toggleStrike().run()
   } else if (canvas.selectedBlockId) {
     const block = canvas.selectedBlock
     const hasUnder = block?.textDecoration?.includes('underline')
@@ -226,11 +155,9 @@ function toggleStrikeThrough() {
 }
 
 function setFontSize(val: string) {
-  if (canvas.editingBlockId) {
-    restoreSelection()
-  }
-  if (canvas.editingBlockId && hasTextSelection()) {
-    execFontSize(Number(val))
+  const editor = getEditor()
+  if (editor && canvas.editingBlockId) {
+    editor.chain().focus().setMark('textStyle', { fontSize: val + 'px' }).run()
   } else if (canvas.selectedBlockId) {
     applyBlockStyle({ fontSize: Number(val) })
   }
@@ -238,11 +165,9 @@ function setFontSize(val: string) {
 }
 
 function setFontColor(val: string) {
-  if (canvas.editingBlockId) {
-    restoreSelection()
-  }
-  if (canvas.editingBlockId && hasTextSelection()) {
-    execForeColor(val)
+  const editor = getEditor()
+  if (editor && canvas.editingBlockId) {
+    editor.chain().focus().setColor(val).run()
   } else if (canvas.selectedBlockId) {
     applyBlockStyle({ fontColor: val })
   }
@@ -250,11 +175,9 @@ function setFontColor(val: string) {
 }
 
 function setFontFamily(val: string) {
-  if (canvas.editingBlockId) {
-    restoreSelection()
-  }
-  if (canvas.editingBlockId && hasTextSelection()) {
-    execFontName(val)
+  const editor = getEditor()
+  if (editor && canvas.editingBlockId) {
+    editor.chain().focus().setFontFamily(val).run()
   } else if (canvas.selectedBlockId) {
     applyBlockStyle({ fontFamily: val || undefined })
   }
@@ -262,11 +185,9 @@ function setFontFamily(val: string) {
 }
 
 function setHiliteColor(val: string) {
-  if (canvas.editingBlockId) {
-    restoreSelection()
-  }
-  if (canvas.editingBlockId && hasTextSelection()) {
-    execHiliteColor(val)
+  const editor = getEditor()
+  if (editor && canvas.editingBlockId) {
+    editor.chain().focus().toggleHighlight({ color: val }).run()
   } else if (canvas.selectedBlockId) {
     canvas.updateBlock(canvas.selectedBlockId, { bgColor: val })
   }
@@ -274,11 +195,9 @@ function setHiliteColor(val: string) {
 }
 
 function clearHilite() {
-  if (canvas.editingBlockId) {
-    restoreSelection()
-  }
-  if (canvas.editingBlockId && hasTextSelection()) {
-    execHiliteColor('transparent')
+  const editor = getEditor()
+  if (editor && canvas.editingBlockId) {
+    editor.chain().focus().unsetHighlight().run()
   } else if (canvas.selectedBlockId) {
     canvas.updateBlock(canvas.selectedBlockId, { bgColor: undefined })
   }
@@ -286,12 +205,10 @@ function clearHilite() {
 }
 
 function setLineHeight(val: string) {
-  // Line height applies to whole block (no execCommand equivalent)
   if (canvas.selectedBlockId) {
     canvas.updateBlock(canvas.selectedBlockId, { lineHeight: Number(val) })
   }
 }
-
 </script>
 
 <template>
@@ -301,10 +218,10 @@ function setLineHeight(val: string) {
   }">
     <!-- Font group -->
     <div class="format-group">
-      <select class="font-family-select" :value="currentFontFamily" @mousedown.stop="saveSelection()" @change="setFontFamily(($event.target as HTMLSelectElement).value)">
+      <select class="font-family-select" :value="currentFontFamily" @change="setFontFamily(($event.target as HTMLSelectElement).value)">
         <option v-for="f in FONT_FAMILIES" :key="f.value" :value="f.value">{{ f.name }}</option>
       </select>
-      <select class="font-size-select" :value="currentFontSize" @mousedown.stop="saveSelection()" @change="setFontSize(($event.target as HTMLSelectElement).value)">
+      <select class="font-size-select" :value="currentFontSize" @change="setFontSize(($event.target as HTMLSelectElement).value)">
         <option v-for="s in [10,11,12,13,14,15,16,18,20,22,24,28,32,36]" :key="s" :value="s">{{ s }}</option>
       </select>
     </div>
@@ -313,10 +230,10 @@ function setLineHeight(val: string) {
 
     <!-- Style buttons group -->
     <div class="format-group btn-group">
-      <button :class="{ active: isBold }" @mousedown="saveSelection(); $event.preventDefault()" @click="toggleBold" title="加粗"><b>B</b></button>
-      <button :class="{ active: isItalic }" @mousedown="saveSelection(); $event.preventDefault()" @click="toggleItalic" title="斜体"><i>I</i></button>
-      <button :class="{ active: isUnderline }" @mousedown="saveSelection(); $event.preventDefault()" @click="toggleUnderline" title="下划线"><u>U</u></button>
-      <button :class="{ active: isStrikeThrough }" @mousedown="saveSelection(); $event.preventDefault()" @click="toggleStrikeThrough" title="删除线"><s>S</s></button>
+      <button :class="{ active: isBold }" @click="toggleBold" title="加粗"><b>B</b></button>
+      <button :class="{ active: isItalic }" @click="toggleItalic" title="斜体"><i>I</i></button>
+      <button :class="{ active: isUnderline }" @click="toggleUnderline" title="下划线"><u>U</u></button>
+      <button :class="{ active: isStrikeThrough }" @click="toggleStrikeThrough" title="删除线"><s>S</s></button>
     </div>
 
     <div class="props-sep"></div>
@@ -331,8 +248,8 @@ function setLineHeight(val: string) {
         <input type="color" :value="currentHiliteColor === 'transparent' ? '#ffff00' : currentHiliteColor" @mousedown.prevent @input="setHiliteColor(($event.target as HTMLInputElement).value)" />
         <span class="color-label hilite-label">⌶</span>
       </div>
-      <button v-if="currentHiliteColor !== 'transparent'" class="clear-hilite-btn" title="清除高亮" @mousedown="saveSelection(); $event.preventDefault()" @click="clearHilite">✕</button>
-      <select class="line-height-select" :value="canvas.selectedBlock?.lineHeight || 1.7" @mousedown.stop="saveSelection()" @change="setLineHeight(($event.target as HTMLSelectElement).value)" title="行高">
+      <button v-if="currentHiliteColor !== 'transparent'" class="clear-hilite-btn" title="清除高亮" @click="clearHilite">✕</button>
+      <select class="line-height-select" :value="canvas.selectedBlock?.lineHeight || 1.7" @change="setLineHeight(($event.target as HTMLSelectElement).value)" title="行高">
         <option v-for="lh in [1.0, 1.2, 1.4, 1.5, 1.6, 1.7, 1.8, 2.0, 2.2, 2.5, 3.0]" :key="lh" :value="lh">{{ lh }}</option>
       </select>
     </div>
@@ -354,126 +271,104 @@ function setLineHeight(val: string) {
 }
 
 .btn-group button {
-  padding: 4px 7px;
-  border: 1px solid transparent;
+  width: 28px;
+  height: 28px;
+  border: none;
   background: transparent;
-  border-radius: 3px;
+  border-radius: 4px;
   cursor: pointer;
   font-size: 13px;
-  color: var(--text);
-  transition: all 0.12s;
-  min-width: 26px;
-  height: 26px;
+  color: var(--text-secondary);
   display: flex;
   align-items: center;
   justify-content: center;
-  line-height: 1;
+  transition: all 0.15s;
 }
 
 .btn-group button:hover {
-  background: var(--primary-light);
-  border-color: var(--primary-border);
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 .btn-group button.active {
   background: var(--primary-light);
-  border-color: var(--primary);
   color: var(--primary);
 }
 
-.font-family-select {
-  width: 90px;
-  padding: 3px 4px;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  font-size: 12px;
-  background: var(--surface);
-  height: 26px;
-}
-
-.font-size-select {
-  width: 48px;
-  padding: 3px 2px;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  font-size: 12px;
-  background: var(--surface);
-  height: 26px;
-  text-align: center;
-}
-
+.font-family-select,
+.font-size-select,
 .line-height-select {
-  width: 48px;
-  padding: 3px 2px;
+  height: 28px;
   border: 1px solid var(--border);
-  border-radius: 3px;
-  font-size: 12px;
+  border-radius: 4px;
   background: var(--surface);
-  height: 26px;
-  text-align: center;
-}
-
-.color-picker-wrap {
-  position: relative;
-  width: 26px;
-  height: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  cursor: pointer;
-  overflow: hidden;
-}
-
-.color-picker-wrap input[type="color"] {
-  position: absolute;
-  top: -4px;
-  left: -4px;
-  width: 34px;
-  height: 34px;
-  border: none;
-  cursor: pointer;
-  opacity: 0;
-}
-
-.color-label {
-  font-size: 14px;
-  font-weight: 700;
   color: var(--text);
-  pointer-events: none;
-}
-
-.color-picker-wrap.hilite .hilite-label {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.clear-hilite-btn {
-  padding: 2px 5px;
-  border: 1px solid var(--border);
-  background: transparent;
-  border-radius: 3px;
+  font-size: 12px;
+  padding: 0 4px;
   cursor: pointer;
-  font-size: 11px;
-  color: var(--text-secondary);
-  height: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.12s;
 }
 
-.clear-hilite-btn:hover {
-  background: var(--danger-light);
-  border-color: var(--danger);
-  color: var(--danger);
-}
+.font-family-select { width: 90px; }
+.font-size-select { width: 50px; }
+.line-height-select { width: 50px; }
 
 .props-sep {
   width: 1px;
   height: 20px;
   background: var(--border);
-  flex-shrink: 0;
+  margin: 0 2px;
+}
+
+.color-picker-wrap {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.color-picker-wrap:hover {
+  background: var(--surface-hover);
+}
+
+.color-picker-wrap input[type="color"] {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.color-label {
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+
+.hilite-label {
+  font-size: 16px;
+}
+
+.clear-hilite-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.clear-hilite-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
 }
 </style>

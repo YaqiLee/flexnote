@@ -30,12 +30,16 @@ export interface BlockData {
   zIndex: number
 }
 
+// Editor instance type (avoid importing TipTap directly in store)
+type EditorInstance = any
+
 export const useCanvasStore = defineStore('canvas', () => {
   const blocks = ref<BlockData[]>([])
   const selectedBlockId = ref<string | null>(null)
   const selectedBlockIds = ref<string[]>([])
   const editingBlockId = ref<string | null>(null)
   const currentTool = ref<'text' | 'image' | 'label' | null>(null)
+  const currentEditor = ref<EditorInstance | null>(null)
   const pendingImageData = ref<{ src: string; width: number; height: number } | null>(null)
   const isLoaded = ref(false)
   const loadVersion = ref(0)
@@ -515,6 +519,10 @@ export const useCanvasStore = defineStore('canvas', () => {
     scheduleSave()
   }, { deep: true })
 
+  function setCurrentEditor(editor: EditorInstance | null) {
+    currentEditor.value = editor
+  }
+
   return {
     blocks,
     selectedBlockId,
@@ -526,6 +534,8 @@ export const useCanvasStore = defineStore('canvas', () => {
     pendingImageData,
     isLoaded,
     loadVersion,
+    currentEditor,
+    setCurrentEditor,
     addBlock,
     updateBlock,
     removeBlock,

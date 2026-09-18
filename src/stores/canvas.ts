@@ -7,7 +7,7 @@ type NoteEntry = NoteData
 
 export interface BlockData {
   id: string
-  type: 'text' | 'image' | 'label' | 'formula'
+  type: 'text' | 'image' | 'label'
   x: number
   y: number
   width?: number
@@ -15,9 +15,11 @@ export interface BlockData {
   content?: string
   src?: string
   labelName?: string
-  formula?: string
   bgColor?: string
   borderRadius?: number
+  borderColor?: string
+  borderWidth?: number
+  borderStyle?: 'solid' | 'dashed' | 'dotted' | 'double'
   fontSize?: number
   fontColor?: string
   fontFamily?: string
@@ -33,9 +35,10 @@ export const useCanvasStore = defineStore('canvas', () => {
   const selectedBlockId = ref<string | null>(null)
   const selectedBlockIds = ref<string[]>([])
   const editingBlockId = ref<string | null>(null)
-  const currentTool = ref<'text' | 'image' | 'label' | 'formula' | null>(null)
+  const currentTool = ref<'text' | 'image' | 'label' | null>(null)
   const pendingImageData = ref<{ src: string; width: number; height: number } | null>(null)
   const isLoaded = ref(false)
+  const loadVersion = ref(0)
   let zIndexCounter = 0
   let saveTimer: ReturnType<typeof setTimeout> | null = null
   let suppressSave = false
@@ -91,7 +94,7 @@ export const useCanvasStore = defineStore('canvas', () => {
 
   function validateAndFixBlock(raw: any): BlockData | null {
     if (!raw || typeof raw !== 'object') return null
-    const validTypes = ['text', 'image', 'label', 'formula'] as const
+    const validTypes = ['text', 'image', 'label'] as const
     const type = validTypes.includes(raw.type) ? raw.type : 'text'
     const x = Number.isFinite(raw.x) ? raw.x : 0
     const y = Number.isFinite(raw.y) ? raw.y : 0
@@ -108,9 +111,11 @@ export const useCanvasStore = defineStore('canvas', () => {
       content: typeof raw.content === 'string' ? raw.content : undefined,
       src: typeof raw.src === 'string' ? raw.src : undefined,
       labelName: typeof raw.labelName === 'string' ? raw.labelName : undefined,
-      formula: typeof raw.formula === 'string' ? raw.formula : undefined,
       bgColor: typeof raw.bgColor === 'string' ? raw.bgColor : undefined,
       borderRadius: Number.isFinite(raw.borderRadius) ? raw.borderRadius : undefined,
+      borderColor: typeof raw.borderColor === 'string' ? raw.borderColor : undefined,
+      borderWidth: Number.isFinite(raw.borderWidth) && raw.borderWidth > 0 ? raw.borderWidth : undefined,
+      borderStyle: ['solid', 'dashed', 'dotted', 'double'].includes(raw.borderStyle) ? raw.borderStyle : undefined,
       fontSize: Number.isFinite(raw.fontSize) ? raw.fontSize : undefined,
       fontColor: typeof raw.fontColor === 'string' ? raw.fontColor : undefined,
       fontFamily: typeof raw.fontFamily === 'string' ? raw.fontFamily : undefined,
@@ -303,6 +308,7 @@ export const useCanvasStore = defineStore('canvas', () => {
     blocks.value = validated
     selectedBlockId.value = null
     normalizeZIndices()
+    loadVersion.value++
     nextTick(() => { suppressSave = false })
   }
 
@@ -519,6 +525,7 @@ export const useCanvasStore = defineStore('canvas', () => {
     currentTool,
     pendingImageData,
     isLoaded,
+    loadVersion,
     addBlock,
     updateBlock,
     removeBlock,

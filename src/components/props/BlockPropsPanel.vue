@@ -30,6 +30,44 @@ function setBorderRadius(val: string) {
   }
 }
 
+function setBorderColor(val: string) {
+  if (canvas.selectedBlockId) {
+    const block = canvas.selectedBlock
+    canvas.updateBlock(canvas.selectedBlockId, {
+      borderColor: val,
+      borderWidth: block?.borderWidth || 1,
+    })
+  }
+}
+
+function setBorderWidth(val: string) {
+  if (canvas.selectedBlockId) {
+    const w = Number(val)
+    const block = canvas.selectedBlock
+    canvas.updateBlock(canvas.selectedBlockId, {
+      borderWidth: w > 0 ? w : undefined,
+      borderColor: w > 0 ? (block?.borderColor || '#cccccc') : undefined,
+    })
+  }
+}
+
+function setBorderStyle(val: string) {
+  if (canvas.selectedBlockId) {
+    const block = canvas.selectedBlock
+    canvas.updateBlock(canvas.selectedBlockId, {
+      borderStyle: val as 'solid' | 'dashed' | 'dotted' | 'double',
+      borderWidth: block?.borderWidth || 1,
+      borderColor: block?.borderColor || '#cccccc',
+    })
+  }
+}
+
+function clearBorder() {
+  if (canvas.selectedBlockId) {
+    canvas.updateBlock(canvas.selectedBlockId, { borderColor: undefined, borderWidth: undefined, borderStyle: undefined })
+  }
+}
+
 function changeLabelType(name: string) {
   if (canvas.selectedBlockId) {
     canvas.updateBlock(canvas.selectedBlockId, { labelName: name })
@@ -49,17 +87,53 @@ function changeLabelType(name: string) {
       <input type="color" :value="canvas.selectedBlock?.bgColor || '#ffffff'" @input="setBgColor(($event.target as HTMLInputElement).value)" />
       <button @mousedown.prevent @click="clearBg" title="清除背景">✕</button>
       <div class="props-sep"></div>
+      <label>边框</label>
+      <input type="color" :value="canvas.selectedBlock?.borderColor || '#cccccc'" @input="setBorderColor(($event.target as HTMLInputElement).value)" title="边框颜色" />
+      <select :value="canvas.selectedBlock?.borderWidth || 0" @change="setBorderWidth(($event.target as HTMLSelectElement).value)" title="边框宽度" class="border-width-select">
+        <option :value="0">无</option>
+        <option :value="1">1px</option>
+        <option :value="2">2px</option>
+        <option :value="3">3px</option>
+        <option :value="4">4px</option>
+        <option :value="5">5px</option>
+      </select>
+      <select :value="canvas.selectedBlock?.borderStyle || 'solid'" @change="setBorderStyle(($event.target as HTMLSelectElement).value)" title="边框类型" class="border-style-select">
+        <option value="solid">实线</option>
+        <option value="dashed">虚线</option>
+        <option value="dotted">点线</option>
+        <option value="double">双线</option>
+      </select>
+      <button v-if="canvas.selectedBlock?.borderWidth" @mousedown.prevent @click="clearBorder" title="清除边框">✕</button>
+      <div class="props-sep"></div>
       <label>圆角</label>
-      <input type="range" min="0" max="30" :value="canvas.selectedBlock?.borderRadius || 0" @input="setBorderRadius(($event.target as HTMLInputElement).value)" />
+      <input type="number" min="0" max="100" :value="canvas.selectedBlock?.borderRadius || 0" @input="setBorderRadius(($event.target as HTMLInputElement).value)" class="radius-input" />
     </template>
 
     <!-- Image block props -->
     <template v-if="canvas.selectedBlock?.type === 'image'">
       <label>圆角</label>
-      <input type="range" min="0" max="30" :value="canvas.selectedBlock?.borderRadius || 0" @input="setBorderRadius(($event.target as HTMLInputElement).value)" />
+      <input type="number" min="0" max="100" :value="canvas.selectedBlock?.borderRadius || 0" @input="setBorderRadius(($event.target as HTMLInputElement).value)" class="radius-input" />
       <div class="props-sep"></div>
       <label>背景</label>
       <input type="color" :value="canvas.selectedBlock?.bgColor || '#ffffff'" @input="setBgColor(($event.target as HTMLInputElement).value)" />
+      <div class="props-sep"></div>
+      <label>边框</label>
+      <input type="color" :value="canvas.selectedBlock?.borderColor || '#cccccc'" @input="setBorderColor(($event.target as HTMLInputElement).value)" title="边框颜色" />
+      <select :value="canvas.selectedBlock?.borderWidth || 0" @change="setBorderWidth(($event.target as HTMLSelectElement).value)" title="边框宽度" class="border-width-select">
+        <option :value="0">无</option>
+        <option :value="1">1px</option>
+        <option :value="2">2px</option>
+        <option :value="3">3px</option>
+        <option :value="4">4px</option>
+        <option :value="5">5px</option>
+      </select>
+      <select :value="canvas.selectedBlock?.borderStyle || 'solid'" @change="setBorderStyle(($event.target as HTMLSelectElement).value)" title="边框类型" class="border-style-select">
+        <option value="solid">实线</option>
+        <option value="dashed">虚线</option>
+        <option value="dotted">点线</option>
+        <option value="double">双线</option>
+      </select>
+      <button v-if="canvas.selectedBlock?.borderWidth" @mousedown.prevent @click="clearBorder" title="清除边框">✕</button>
     </template>
 
     <!-- Label block props -->
@@ -68,11 +142,6 @@ function changeLabelType(name: string) {
       <select :value="canvas.selectedBlock?.labelName || '重点'" @change="changeLabelType(($event.target as HTMLSelectElement).value)">
         <option v-for="p in LABEL_PRESETS" :key="p.name" :value="p.name">{{ p.name }}</option>
       </select>
-    </template>
-
-    <!-- Formula block props -->
-    <template v-if="canvas.selectedBlock?.type === 'formula'">
-      <label style="color: var(--text-secondary)">双击编辑公式文本</label>
     </template>
 
     <div class="props-sep"></div>
@@ -138,6 +207,31 @@ function changeLabelType(name: string) {
   font-size: 12px;
   background: var(--surface);
   height: 26px;
+}
+
+.border-width-select {
+  width: 54px;
+}
+
+.border-style-select {
+  width: 58px;
+}
+
+.radius-input {
+  width: 48px;
+  height: 26px;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: center;
+}
+
+.radius-input:focus {
+  outline: none;
+  border-color: var(--primary);
 }
 
 .props-sep {

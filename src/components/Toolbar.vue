@@ -4,7 +4,7 @@ import { saveAsset, assetUrl } from '../services/assetStore'
 
 const canvas = useCanvasStore()
 
-function setTool(tool: 'text' | 'image' | 'label' | 'formula') {
+function setTool(tool: 'text' | 'image' | 'label') {
   canvas.setTool(canvas.currentTool === tool ? null : tool)
 }
 
@@ -63,15 +63,6 @@ async function handleImageUpload(e: Event) {
       >
         <span class="tool-icon">🏷</span>
         <span class="tool-label">标签</span>
-      </button>
-      <button
-        class="tool-btn"
-        :class="{ active: canvas.currentTool === 'formula' }"
-        title="公式"
-        @click="setTool('formula')"
-      >
-        <span class="tool-icon">∑</span>
-        <span class="tool-label">公式</span>
       </button>
     </div>
     <input

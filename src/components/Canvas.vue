@@ -25,11 +25,29 @@ function clearTextSelection() {
 }
 
 // Dynamic canvas size
-const canvasWidth = ref(3000)
-const canvasHeight = ref(2000)
 const CANVAS_PADDING = 200
-const MIN_CANVAS_WIDTH = 3000
-const MIN_CANVAS_HEIGHT = 2000
+const DEFAULT_CANVAS_WIDTH = Math.max(window.innerWidth, 1200)
+const DEFAULT_CANVAS_HEIGHT = Math.max(window.innerHeight, 800)
+const canvasWidth = ref(DEFAULT_CANVAS_WIDTH)
+const canvasHeight = ref(DEFAULT_CANVAS_HEIGHT)
+
+function fitCanvasToContent() {
+  if (canvas.blocks.length === 0) {
+    canvasWidth.value = DEFAULT_CANVAS_WIDTH
+    canvasHeight.value = DEFAULT_CANVAS_HEIGHT
+    return
+  }
+  let maxRight = 0
+  let maxBottom = 0
+  for (const block of canvas.blocks) {
+    const right = block.x + (block.width || 200)
+    const bottom = block.y + (block.height || 80)
+    if (right > maxRight) maxRight = right
+    if (bottom > maxBottom) maxBottom = bottom
+  }
+  canvasWidth.value = Math.max(DEFAULT_CANVAS_WIDTH, Math.ceil((maxRight + CANVAS_PADDING) / 100) * 100)
+  canvasHeight.value = Math.max(DEFAULT_CANVAS_HEIGHT, Math.ceil((maxBottom + CANVAS_PADDING) / 100) * 100)
+}
 
 function expandCanvasIfNeeded() {
   let maxRight = 0
@@ -40,12 +58,11 @@ function expandCanvasIfNeeded() {
     if (right > maxRight) maxRight = right
     if (bottom > maxBottom) maxBottom = bottom
   }
-  // Expand right/bottom with padding if blocks approach boundary
   if (maxRight + CANVAS_PADDING > canvasWidth.value) {
-    canvasWidth.value = Math.max(MIN_CANVAS_WIDTH, Math.ceil((maxRight + CANVAS_PADDING) / 100) * 100)
+    canvasWidth.value = Math.max(DEFAULT_CANVAS_WIDTH, Math.ceil((maxRight + CANVAS_PADDING) / 100) * 100)
   }
   if (maxBottom + CANVAS_PADDING > canvasHeight.value) {
-    canvasHeight.value = Math.max(MIN_CANVAS_HEIGHT, Math.ceil((maxBottom + CANVAS_PADDING) / 100) * 100)
+    canvasHeight.value = Math.max(DEFAULT_CANVAS_HEIGHT, Math.ceil((maxBottom + CANVAS_PADDING) / 100) * 100)
   }
 }
 
@@ -61,12 +78,12 @@ function expandCanvasForViewport() {
 
   // Expand right if scrolled near right edge
   if (scrollLeft + viewWidth > canvasWidth.value - CANVAS_PADDING) {
-    canvasWidth.value = Math.max(MIN_CANVAS_WIDTH, Math.ceil((scrollLeft + viewWidth + CANVAS_PADDING) / 100) * 100)
+    canvasWidth.value = Math.max(DEFAULT_CANVAS_WIDTH, Math.ceil((scrollLeft + viewWidth + CANVAS_PADDING) / 100) * 100)
   }
 
   // Expand bottom if scrolled near bottom edge
   if (scrollTop + viewHeight > canvasHeight.value - CANVAS_PADDING) {
-    canvasHeight.value = Math.max(MIN_CANVAS_HEIGHT, Math.ceil((scrollTop + viewHeight + CANVAS_PADDING) / 100) * 100)
+    canvasHeight.value = Math.max(DEFAULT_CANVAS_HEIGHT, Math.ceil((scrollTop + viewHeight + CANVAS_PADDING) / 100) * 100)
   }
 }
 
@@ -151,6 +168,11 @@ function getImageSrc(block: { src?: string }): string {
   if (!isAssetRef(block.src)) return block.src
   return resolvedImageUrls.value[block.src] || ''
 }
+
+// Fit canvas to content when a note is loaded or switched
+watch(() => canvas.loadVersion, () => {
+  nextTick(() => fitCanvasToContent())
+})
 
 // Pre-resolve all image blocks when they change
 watch(() => canvas.blocks.map(b => b.type === 'image' ? b.src : null).filter(Boolean), async (srcs) => {
@@ -381,15 +403,8 @@ function handleCanvasClick(e: MouseEvent) {
     expandCanvasIfNeeded()
   } else if (canvas.currentTool === 'label') {
     canvas.addBlock({ type: 'label', x, y, labelName: '重点', borderRadius: 14 })
-    expandCanvasIfNeeded()
-  } else if (canvas.currentTool === 'formula') {
-    const id = canvas.addBlock({ type: 'formula', x, y, formula: 'U = I × R', borderRadius: 6 })
     canvas.setTool(null)
     expandCanvasIfNeeded()
-    nextTick(() => {
-      const el = document.querySelector(`[data-block-id="${id}"] .block-formula`) as HTMLElement
-      if (el) el.focus()
-    })
   }
 }
 
@@ -470,37 +485,6 @@ function onTextMouseDown(e: MouseEvent, blockId: string) {
   canvas.setEditing(blockId)
 }
 
-function onFormulaFocus(blockId: string) {
-  canvas.setEditing(blockId)
-}
-
-function onFormulaBlur(blockId: string, e: FocusEvent) {
-  const el = e.target as HTMLElement
-  canvas.updateBlock(blockId, { formula: el.textContent || '' })
-  if (canvas.editingBlockId === blockId) {
-    canvas.setEditing(null)
-  }
-}
-
-function onFormulaMouseDown(e: MouseEvent, blockId: string) {
-  if (e.shiftKey) {
-    const ids = [...canvas.selectedBlockIds]
-    const idx = ids.indexOf(blockId)
-    if (idx >= 0) {
-      ids.splice(idx, 1)
-    } else {
-      ids.push(blockId)
-    }
-    canvas.selectBlocks(ids)
-    e.preventDefault()
-    return
-  }
-  if (!canvas.selectedBlockIds.includes(blockId)) {
-    canvas.selectBlock(blockId)
-  }
-  canvas.setEditing(blockId)
-}
-
 function onBlockMouseDown(e: MouseEvent, blockId: string) {
   const target = e.target as HTMLElement
   if (target.classList.contains('rh')) return
@@ -508,9 +492,6 @@ function onBlockMouseDown(e: MouseEvent, blockId: string) {
 
   const isTextBlock = target.classList.contains('block-text')
   if (isTextBlock) return
-
-  const isFormulaBlock = target.classList.contains('block-formula')
-  if (isFormulaBlock) return
 
   // Shift+click toggles individual block selection
   if (e.shiftKey) {
@@ -1077,6 +1058,7 @@ onUnmounted(() => {
           zIndex: block.zIndex,
           borderRadius: (block.borderRadius || 0) + 'px',
           backgroundColor: block.bgColor || undefined,
+          border: block.borderWidth ? `${block.borderWidth}px ${block.borderStyle || 'solid'} ${block.borderColor || '#cccccc'}` : undefined,
           width: block.width ? block.width + 'px' : undefined,
           height: block.height ? block.height + 'px' : undefined,
         }"
@@ -1122,17 +1104,6 @@ onUnmounted(() => {
         >
           {{ block.labelName || '重点' }}
         </div>
-
-        <div
-          v-else-if="block.type === 'formula'"
-          class="block-formula"
-          :contenteditable="canvas.editingBlockId === block.id ? 'true' : 'false'"
-          @focus="onFormulaFocus(block.id)"
-          @blur="onFormulaBlur(block.id, $event)"
-          @mousedown.stop="onFormulaMouseDown($event, block.id)"
-          @dblclick.stop="canvas.setEditing(block.id); ($event.target as HTMLElement).focus()"
-          v-init-html="block.formula || 'E = mc²'"
-        />
 
         <template v-if="(block.type === 'text' || block.type === 'image') && canvas.selectedBlockIds.includes(block.id)">
           <div class="rh rh-n" @mousedown="startResize($event, block.id, 'n')" />
@@ -1200,8 +1171,8 @@ onUnmounted(() => {
 
 /* Custom scrollbar styles */
 .canvas-wrap::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 3px;
+  height: 3px;
 }
 
 .canvas-wrap::-webkit-scrollbar-track {
@@ -1223,8 +1194,6 @@ onUnmounted(() => {
 
 .canvas {
   position: relative;
-  min-width: 3000px;
-  min-height: 2000px;
 }
 
 .block {
@@ -1300,22 +1269,6 @@ onUnmounted(() => {
   border-radius: 12px;
   cursor: grab;
 }
-
-.block-formula {
-  padding: 8px 16px;
-  font-size: 18px;
-  font-family: 'Times New Roman', 'Cambria Math', serif;
-  font-style: italic;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  outline: none;
-  cursor: text;
-}
-.block-formula:focus { outline: 2px solid var(--primary-border); }
 
 .rh {
   position: absolute;

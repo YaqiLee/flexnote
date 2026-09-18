@@ -2,7 +2,6 @@
 import { watch, onBeforeUnmount } from 'vue'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
-import Underline from '@tiptap/extension-underline'
 import { TextStyle } from '@tiptap/extension-text-style'
 import Color from '@tiptap/extension-color'
 import FontFamily from '@tiptap/extension-font-family'
@@ -20,7 +19,6 @@ import { OrderedList } from '@tiptap/extension-ordered-list'
 import { BulletList } from '@tiptap/extension-bullet-list'
 import { ListItem } from '@tiptap/extension-list-item'
 import { Image } from '@tiptap/extension-image'
-import { Link } from '@tiptap/extension-link'
 import { common, createLowlight } from 'lowlight'
 import { Extension, markInputRule } from '@tiptap/core'
 import { useCanvasStore } from '../stores/canvas'
@@ -90,14 +88,15 @@ const editor = useEditor({
       orderedList: false,
       bulletList: false,
       listItem: false,
+      link: { openOnClick: false, autolink: true },
+      underline: {},
     }),
-    Underline,
     TextStyle,
     Color,
     FontFamily,
     Highlight.configure({ multicolor: true }),
     StrikethroughExtension,
-    CodeBlockLowlight.configure({ lowlight }),
+    CodeBlockLowlight.configure({ lowlight, defaultLanguage: 'javascript' }),
     Table.configure({ resizable: true }),
     TableRow,
     TableCell,
@@ -111,7 +110,6 @@ const editor = useEditor({
     BulletList,
     OrderedList,
     Image.configure({ inline: false, allowBase64: true }),
-    Link.configure({ openOnClick: false, autolink: true }),
   ],
   onUpdate: ({ editor: e }) => {
     emit('update:content', e.getHTML())
@@ -301,5 +299,76 @@ onBeforeUnmount(() => {
 
 .tiptap-editor :deep(.ProseMirror mark) {
   background-color: inherit;
+}
+
+/* Syntax highlighting - GitHub Dark theme for lowlight */
+.tiptap-editor :deep(.ProseMirror pre .hljs-keyword),
+.tiptap-editor :deep(.ProseMirror pre .hljs-doctag),
+.tiptap-editor :deep(.ProseMirror pre .hljs-type),
+.tiptap-editor :deep(.ProseMirror pre .hljs-template-tag),
+.tiptap-editor :deep(.ProseMirror pre .hljs-template-variable) {
+  color: #ff7b72;
+}
+
+.tiptap-editor :deep(.ProseMirror pre .hljs-title),
+.tiptap-editor :deep(.ProseMirror pre .hljs-title\.class_),
+.tiptap-editor :deep(.ProseMirror pre .hljs-title\.function_) {
+  color: #d2a8ff;
+}
+
+.tiptap-editor :deep(.ProseMirror pre .hljs-attr),
+.tiptap-editor :deep(.ProseMirror pre .hljs-attribute),
+.tiptap-editor :deep(.ProseMirror pre .hljs-literal),
+.tiptap-editor :deep(.ProseMirror pre .hljs-number),
+.tiptap-editor :deep(.ProseMirror pre .hljs-operator),
+.tiptap-editor :deep(.ProseMirror pre .hljs-variable),
+.tiptap-editor :deep(.ProseMirror pre .hljs-selector-attr),
+.tiptap-editor :deep(.ProseMirror pre .hljs-selector-class),
+.tiptap-editor :deep(.ProseMirror pre .hljs-selector-id) {
+  color: #79c0ff;
+}
+
+.tiptap-editor :deep(.ProseMirror pre .hljs-regexp),
+.tiptap-editor :deep(.ProseMirror pre .hljs-string),
+.tiptap-editor :deep(.ProseMirror pre .hljs-meta .hljs-string) {
+  color: #a5d6ff;
+}
+
+.tiptap-editor :deep(.ProseMirror pre .hljs-built_in),
+.tiptap-editor :deep(.ProseMirror pre .hljs-symbol) {
+  color: #ffa657;
+}
+
+.tiptap-editor :deep(.ProseMirror pre .hljs-comment),
+.tiptap-editor :deep(.ProseMirror pre .hljs-quote) {
+  color: #8b949e;
+  font-style: italic;
+}
+
+.tiptap-editor :deep(.ProseMirror pre .hljs-name),
+.tiptap-editor :deep(.ProseMirror pre .hljs-tag),
+.tiptap-editor :deep(.ProseMirror pre .hljs-meta) {
+  color: #7ee787;
+}
+
+.tiptap-editor :deep(.ProseMirror pre .hljs-section),
+.tiptap-editor :deep(.ProseMirror pre .hljs-emphasis) {
+  color: #d2a8ff;
+  font-weight: bold;
+}
+
+.tiptap-editor :deep(.ProseMirror pre .hljs-strong) {
+  font-weight: bold;
+}
+
+.tiptap-editor :deep(.ProseMirror pre .hljs-bullet),
+.tiptap-editor :deep(.ProseMirror pre .hljs-addition) {
+  color: #aff5b4;
+  background: #033a16;
+}
+
+.tiptap-editor :deep(.ProseMirror pre .hljs-deletion) {
+  color: #ffdcd7;
+  background: #67060c;
 }
 </style>

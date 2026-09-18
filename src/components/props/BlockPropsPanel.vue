@@ -157,6 +157,10 @@ function changeLabelType(name: string) {
   flex-wrap: nowrap;
 }
 
+.text-format-bar + .block-props-panel {
+  margin-top: 5px;
+}
+
 .block-props-panel label {
   font-size: 11px;
   color: var(--text-secondary);

@@ -2,6 +2,9 @@
 
 A flexible, modern note-taking application built with Tauri 2 and Vue 3.
 
+<img width="1920" height="1009" alt="image" src="https://github.com/user-attachments/assets/fea38ab6-d9c4-46f8-a23c-21b4042b4fd7" />
+
+
 ## Features
 
 - **Rich Text Editing** - Powered by TipTap with support for:

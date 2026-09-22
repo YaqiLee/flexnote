@@ -3,7 +3,8 @@
 A flexible, modern note-taking application built with Tauri 2 and Vue 3.
 
 <img width="1920" height="1009" alt="image" src="https://github.com/user-attachments/assets/fea38ab6-d9c4-46f8-a23c-21b4042b4fd7" />
-
+<img width="1626" height="809" alt="image" src="https://github.com/user-attachments/assets/b3c17e51-a3aa-4220-b224-886d350bc30d" />
+<img width="1920" height="1009" alt="image" src="https://github.com/user-attachments/assets/1a0b1045-7592-4b63-999d-4f8a1fe0939f" />
 
 ## Features
 

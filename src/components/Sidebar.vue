@@ -378,12 +378,6 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div class="sidebar-footer">
-      <div class="shortcut-entry">📝 快速笔记</div>
-      <div class="shortcut-entry">❌ 错题本</div>
-      <div class="shortcut-entry">⭐ 收藏夹</div>
-    </div>
-
     <!-- Context Menu -->
     <Teleport to="body">
       <div
